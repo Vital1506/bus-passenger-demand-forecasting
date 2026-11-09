@@ -1,0 +1,76 @@
+# Bus Passenger Demand Forecasting
+
+An operationally oriented Python baseline for **daily passenger boardings per route**. The workflow validates input coverage, uses time-based rolling-origin backtests, compares a machine-learning model with a seasonal-naive baseline, saves evaluation artifacts, and produces recursive forecasts with approximate historical error bands.
+
+This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
+
+## Forecast contract
+
+- Grain: one row per route and calendar service date.
+- Target: nonnegative passenger boarding count (`passengers`).
+- Default forecast horizon: 7 days.
+- Inputs: recent demand lags, trailing means/variation, day-of-week, weekend, month, and annual seasonality.
+- Model: scikit-learn histogram gradient boosting with one-hot route encoding.
+- Backtest: expanding-window, rolling-origin evaluation at the same multi-day horizon used for forecasting (4 folds × 7 days by default).
+- Comparator: seasonal naive, repeating each route's count from the same weekday one week earlier.
+- Metrics: MAE, RMSE, and WAPE overall and by route.
+- Forecast ranges: route-specific 90th-percentile absolute out-of-fold error, displayed as a symmetric approximate band. This is not a formally calibrated prediction interval.
+
+Every model forecast is recursive: predictions earlier in the requested horizon feed lag features for later dates. Historical validation follows that same process. This avoids evaluating a one-step model as if it were a multi-day forecasting system.
+
+## Setup
+
+Python 3.10 or newer is required.
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+## Data format
+
+CSV required columns:
+
+| Column | Meaning |
+|---|---|
+| `service_date` | Local service date in `YYYY-MM-DD` format |
+| `route_id` | Stable route identifier |
+| `passengers` | Nonnegative passenger boardings for that route and date |
+
+Use one row per route/date; aggregate at the source or resolve duplicate rows. Counts must be finite and nonnegative. Dates need to be continuous for each route through the latest system date. Missing dates fail by default because an absent record may mean missing data, no service, or zero demand. Choose `--missing-days zero` only after operations confirms that interpretation. Canceled service should ideally be represented by an explicit service calendar instead of silently equated to zero demand.
+
+The training workflow currently consumes daily counts only. Holidays, school terms, scheduled service, disruptions, weather, and major events are valuable future-known signals but are not yet features. They should be integrated only with an as-of-time rule so historical training does not see information unavailable when the forecast would have been made.
+
+## Run the checks, backtest, and forecast
+
+The included sample is synthetic and only demonstrates the workflow.
+
+```powershell
+python -m unittest discover -s tests
+python -m src.profile_data --data data/sample_daily_ridership.csv
+python -m src.train --data data/sample_daily_ridership.csv --horizon 7 --folds 4
+python -m src.forecast --data data/sample_daily_ridership.csv --model artifacts/model.joblib --days 7 --output outputs/forecast.csv
+```
+
+The unit checks cover fail-closed missing-date handling, explicit zero filling, lag leakage, and recursive seasonal-naive behavior. Run them in the same Python environment used for training.
+
+`train` writes:
+
+- `artifacts/model.joblib`: fitted model, training cutoff, selected horizon, route list, calibration bands, and backtest metrics.
+- `artifacts/backtest_metrics.json`: overall and route-level comparisons against the seasonal-naive baseline.
+- `artifacts/backtest_predictions.csv`: each out-of-fold actual, model prediction, baseline prediction, and fold.
+
+`forecast` writes `service_date`, `route_id`, `predicted_passengers`, `lower_90_approx`, and `upper_90_approx`. It rejects data older than the model cutoff, previously unseen routes, excessive requested horizons, and discontinuous history unless the zero-fill policy is explicitly chosen. Train with a longer `--horizon` before requesting a longer forecast.
+
+## Interpretation and deployment path
+
+1. Confirm boardings vs. alightings, service-day boundary/time zone, route variants, and route ID changes.
+2. Reconcile passenger counts to the source system and document how APC/manual corrections are handled.
+3. Review data gaps, canceled-service dates, route starts/ends, and abnormal counts before training.
+4. Run the rolling backtest and inspect every route. The model should beat the baseline consistently enough for the business use case; investigate any regression.
+5. Keep a final untouched time period for sign-off. The rolling folds are for model selection, so they should not be the sole final acceptance evidence.
+6. Run in shadow mode and save each forecast, input cutoff, model version, actual outcome, and error. Agree thresholds, fallback behavior, ownership, and retraining cadence with operations.
+7. Add service schedules, holidays, weather forecasts, school calendars, events, and disruptions as versioned, forecast-time-available features. Evaluate capacity planning needs separately from average demand forecasting.
+
+This repository does not include a data connector, production scheduler/API, monitoring service, service-calendar logic, capacity optimizer, or privacy/security review. Those depend on company systems and requirements. No company data was provided; do not treat sample metrics as evidence of real-world performance.
