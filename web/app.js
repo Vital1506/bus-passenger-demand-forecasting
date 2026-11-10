@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, toastTimer: null };
+const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
@@ -110,13 +110,26 @@ function render(data) {
   const source = data.source === "synthetic demo data" ? "Synthetic sample data" : data.source === "company upload" ? "Operator data uploaded" : "Waiting for data";
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
-  $("#workflowNote").textContent = data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
+  $("#workflowNote").textContent = state.publicDemo ? "Public read-only preview using synthetic data. Configure an operator API key in Settings to upload data or train models." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
   renderChart(data.forecasts);
   renderTable(data.forecasts);
 }
+function setPublicDemoMode(enabled) {
+  state.publicDemo = enabled;
+  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays")].forEach((node) => { if (node) node.disabled = enabled || state.busy; });
+  $("#downloadSample").href = enabled ? "/api/public-demo/sample.csv" : "/api/template.csv";
+  $("#downloadForecast").href = enabled ? "/api/public-demo/forecast.csv" : "/api/forecast.csv";
+}
 async function refreshStatus() {
-  try { render(await api("/api/status")); setConnection(true); }
-  catch (error) { setConnection(false); if (error.message.includes("access key")) toast(error.message, true); }
+  try {
+    if (accessKey()) {
+      try { setPublicDemoMode(false); render(await api("/api/status")); setConnection(true); return; }
+      catch (error) { if (!error.message.includes("access key")) throw error; }
+    }
+    setPublicDemoMode(true);
+    render(await api("/api/public-demo/status"));
+    setConnection(true);
+  } catch (error) { setConnection(false); if (error.message.includes("access key")) toast(error.message, true); }
 }
 async function withBusy(label, operation) {
   if (state.busy) return;
@@ -137,8 +150,8 @@ function setup() {
   $("#trainButton").addEventListener("click", () => withBusy("Training…", () => train()));
   $("#demoButton").addEventListener("click", () => withBusy("Running demo…", async () => { await api("/api/data/demo", { method: "POST" }); return train({ horizon: 7, folds: 4 }); }));
   $("#refreshForecast").addEventListener("click", () => withBusy("Refreshing…", () => api("/api/forecast", { method: "POST", body: JSON.stringify({ days: Number($("#forecastDays").value), missing_days: $("#missingDays").value }) })));
-  $("#downloadForecast").addEventListener("click", (event) => { event.preventDefault(); downloadFile("/api/forecast.csv", "bus_demand_forecast.csv").catch((error) => toast(error.message, true)); });
-  $("#downloadSample").addEventListener("click", (event) => { event.preventDefault(); downloadFile("/api/template.csv", "daily_route_counts_sample.csv").catch((error) => toast(error.message, true)); });
+  $("#downloadForecast").addEventListener("click", (event) => { event.preventDefault(); const publicDemo = state.publicDemo; downloadFile(publicDemo ? "/api/public-demo/forecast.csv" : "/api/forecast.csv", publicDemo ? "bus_demand_synthetic_demo_forecast.csv" : "bus_demand_forecast.csv").catch((error) => toast(error.message, true)); });
+  $("#downloadSample").addEventListener("click", (event) => { event.preventDefault(); const publicDemo = state.publicDemo; downloadFile(publicDemo ? "/api/public-demo/sample.csv" : "/api/template.csv", publicDemo ? "synthetic_daily_route_counts.csv" : "daily_route_counts_sample.csv").catch((error) => toast(error.message, true)); });
   $("#forecastDays").addEventListener("change", () => { if (state.data?.model_trained) $("#refreshForecast").click(); });
   $("#csvFile").addEventListener("change", (event) => { const file = event.target.files?.[0]; if (!file) return; withBusy("Uploading…", async () => { const form = new FormData(); form.append("file", file); form.append("missing_days", $("#missingDays").value); return api("/api/data/upload", { method: "POST", body: form }); }).finally(() => { event.target.value = ""; }); });
   const drop = $("#dropzone");
