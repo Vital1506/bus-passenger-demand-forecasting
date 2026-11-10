@@ -1,6 +1,6 @@
-# Controlled company pilot
+# Later phase: company pilot (after approval)
 
-This is a deployment and acceptance runbook for a limited, non-critical pilot. Passing it does not make the forecasting system certified for dispatch or service decisions. The live public Render website remains a read-only synthetic demo.
+This runbook is for a future, limited pilot after the company approves the project and hosting. It is not needed to review the current prototype. The current live website is a read-only synthetic demo; use generated sample data for demonstrations. Do not import company data as part of prototype review. Even after approval, a pilot is not automatically certified for dispatch or service decisions.
 
 ## What the pilot blueprint creates
 
