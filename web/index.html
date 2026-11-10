@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101a2c" />
+    <meta name="description" content="Daily route level bus passenger demand forecasts and operating signals." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/app.css" />
+    <title>Bus Demand Forecast</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Bus Demand Forecast home">
+          <img src="/static/icon.svg" width="38" height="38" alt="" />
+          <span><strong>ROUTE / SIGNAL</strong><small>OPERATIONS INTELLIGENCE</small></span>
+        </a>
+        <div class="top-actions">
+          <span id="connection" class="connection"><i></i><span>Connecting</span></span>
+          <button id="installButton" class="button button-quiet hidden" type="button">Install app</button>
+          <button id="settingsButton" class="icon-button" type="button" aria-label="API access settings" title="API access settings">⚙</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="pulse"></span> DAILY ROUTE FORECASTING</p>
+            <h1>Plan tomorrow’s<br /><em>passenger demand.</em></h1>
+            <p class="hero-description">Turn daily boarding counts into a clear, route by route view of the week ahead.</p>
+            <div class="hero-meta"><span class="meta-dot"></span><span id="sourceLabel">Waiting for data</span><span class="meta-separator">/</span><span id="updatedLabel">No forecast yet</span></div>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+            <div class="route-line"></div><div class="route-node node-a"></div><div class="route-node node-b"></div><div class="route-node node-c"></div>
+            <div class="art-label label-a">R-10 <b>+8.4%</b></div><div class="art-label label-b">R-22 <b>+3.1%</b></div><div class="art-label label-c">R-35 <b>+6.7%</b></div>
+            <div class="art-center"><img src="/static/icon.svg" alt="" /></div>
+          </div>
+        </section>
+
+        <section class="metrics-grid" aria-label="Forecast overview">
+          <article class="metric-card"><div class="metric-top"><span>ROUTES IN SCOPE</span><span class="metric-symbol">↗</span></div><strong id="routeCount">—</strong><small id="rowCount">Upload route counts to begin</small></article>
+          <article class="metric-card"><div class="metric-top"><span>LAST SERVICE DATE</span><span class="metric-symbol">◷</span></div><strong id="latestDate">—</strong><small>Latest daily observation received</small></article>
+          <article class="metric-card"><div class="metric-top"><span>MODEL WAPE</span><span class="metric-symbol">⌁</span></div><strong id="modelWape">—</strong><small id="modelCompare">Rolling time based validation</small></article>
+          <article class="metric-card metric-highlight"><div class="metric-top"><span>FORECAST WINDOW</span><span class="metric-symbol">▤</span></div><strong id="horizonLabel">—</strong><small id="modelState">No model trained</small></article>
+        </section>
+
+        <section class="workspace-grid">
+          <section class="panel forecast-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">DEMAND OUTLOOK</p><h2>Next service days</h2></div>
+              <div class="panel-tools"><label class="sr-only" for="forecastDays">Forecast days</label><select id="forecastDays" aria-label="Forecast days"><option value="7">Next 7 days</option><option value="3">Next 3 days</option><option value="14">Next 14 days</option><option value="28">Next 28 days</option></select><button id="refreshForecast" class="button button-quiet" type="button">Refresh forecast</button></div>
+            </div>
+            <div id="chartWrap" class="chart-wrap"><div id="emptyChart" class="empty-state"><div class="empty-icon">⌁</div><strong>Your forecast will appear here</strong><span>Upload daily route counts or try the synthetic sample.</span></div><svg id="forecastChart" class="forecast-chart hidden" role="img" aria-label="Total predicted passengers by service date"></svg></div>
+            <div class="chart-legend"><span><i class="legend-line"></i>Forecast total</span><span><i class="legend-band"></i>Approximate historical error range</span><span id="chartRange" class="chart-range">—</span></div>
+          </section>
+
+          <section class="panel workflow-panel">
+            <div class="panel-heading"><div><p class="eyebrow">GET STARTED</p><h2>Update the signal</h2></div><span class="step-count">01—03</span></div>
+            <div class="flow-step"><span class="step-number">01</span><div><strong>Bring in daily counts</strong><p>CSV needs <code>service_date</code>, <code>route_id</code>, and <code>passengers</code>.</p></div></div>
+            <label id="dropzone" class="dropzone" for="csvFile"><span class="upload-mark">↑</span><span><strong>Choose a CSV file</strong><small>or drop it here · up to 20 MB</small></span><input id="csvFile" type="file" accept=".csv,text/csv" /></label>
+            <div class="flow-controls"><label for="missingDays">Missing date policy</label><select id="missingDays"><option value="error">Flag missing dates</option><option value="zero">Treat missing as zero</option></select><a id="downloadSample" href="/api/template.csv" class="text-link" download>Get sample CSV</a></div>
+            <button id="demoButton" class="demo-button" type="button">Try the synthetic demo <span>↗</span></button>
+            <div class="flow-divider"></div>
+            <div class="flow-step"><span class="step-number">02</span><div><strong>Train and compare</strong><p>Backtest against a same weekday last week baseline.</p></div></div>
+            <div class="training-controls"><label for="trainDays">Forecast days</label><select id="trainDays"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select><button id="trainButton" class="button button-primary" type="button">Train / retrain model <span>→</span></button></div>
+            <div class="flow-step last-step"><span class="step-number">03</span><div><strong>Review before you act</strong><p>Validation scores are historical evidence, not a guarantee of future accuracy.</p></div></div>
+            <p id="workflowNote" class="workflow-note">Synthetic sample data is provided for a walkthrough. Replace it with approved company data before operational use.</p>
+          </section>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-heading"><div><p class="eyebrow">ROUTE LEVEL DETAIL</p><h2>Forecast by service date</h2></div><a id="downloadForecast" class="button button-quiet disabled-link" href="/api/forecast.csv" download>Download CSV <span>↓</span></a></div>
+          <div class="table-scroll"><table><thead><tr><th>SERVICE DATE</th><th>ROUTE</th><th class="numeric">PREDICTED BOARDINGS</th><th class="numeric">APPROXIMATE RANGE</th></tr></thead><tbody id="forecastRows"><tr class="empty-row"><td colspan="4">Forecast rows will appear after model training.</td></tr></tbody></table></div>
+          <p class="table-footnote">The range uses rolling backtest residuals and is approximate. It is not a formally calibrated prediction interval.</p>
+        </section>
+
+        <section class="bottom-strip"><span><i class="live-dot"></i> Daily counts · event triggered refresh</span><span>Model uses only history available before each forecast date</span><span>v0.1 · Prototype</span></section>
+      </main>
+      <footer><span>ROUTE / SIGNAL</span><span>BUILT FOR BETTER SERVICE PLANNING</span></footer>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <dialog id="settingsDialog" class="settings-dialog"><form method="dialog"><div class="dialog-head"><div><p class="eyebrow">SECURE CONNECTION</p><h2>API access</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div><p>Connect this app to your local service or the shared service address from your administrator. The address and access key are stored on this device only.</p><label for="apiUrl">API service address</label><input id="apiUrl" type="url" autocomplete="url" placeholder="Uses the service hosting this page" /><label for="apiKey" class="key-label">Bearer access key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Paste key supplied by your administrator" /><div class="dialog-actions"><button id="clearKey" class="button button-quiet" type="button">Reset connection</button><button id="saveKey" class="button button-primary" value="default">Save connection <span>→</span></button></div></form></dialog>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

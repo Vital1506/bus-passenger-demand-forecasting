@@ -12,20 +12,19 @@ from .forecasting import complete_daily_series, load_data
 from .modeling import recursive_forecast
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", required=True, help="CSV with service_date, route_id, passengers")
-    parser.add_argument("--model", required=True, help="Model bundle produced by src.train")
-    parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--output", default="outputs/forecast.csv")
-    parser.add_argument("--missing-days", choices=["error", "zero"], default="error")
-    args = parser.parse_args()
-    if args.days < 1 or args.days > 90:
-        parser.error("--days must be between 1 and 90")
-    bundle = joblib.load(args.model)
-    if args.days > bundle["horizon"]:
-        parser.error(f"This model was backtested for {bundle['horizon']} days; retrain with a longer --horizon before forecasting farther ahead")
-    history = complete_daily_series(load_data(args.data), missing_days=args.missing_days)
+def build_forecast(
+    data_path: str | Path,
+    model_path: str | Path,
+    days: int = 7,
+    missing_days: str = "error",
+) -> pd.DataFrame:
+    """Build a forecast from a saved model and validated route history."""
+    if days < 1 or days > 90:
+        raise ValueError("days must be between 1 and 90")
+    bundle = joblib.load(model_path)
+    if days > bundle["horizon"]:
+        raise ValueError(f"This model was backtested for {bundle['horizon']} days; retrain with a longer horizon before forecasting farther ahead")
+    history = complete_daily_series(load_data(str(data_path)), missing_days=missing_days)
     last_date = history["service_date"].max()
     trained_through = pd.Timestamp(bundle["trained_through"])
     if last_date < trained_through:
@@ -35,7 +34,7 @@ def main() -> None:
     unknown = routes - trained_routes
     if unknown:
         raise ValueError(f"Input includes routes absent during training: {', '.join(sorted(unknown))}. Train with sufficient history for them first.")
-    forecast = recursive_forecast(bundle["model"], history, args.days)
+    forecast = recursive_forecast(bundle["model"], history, days)
     forecast["service_date"] = pd.to_datetime(forecast["service_date"])
     bands = bundle["route_error_band_90"]
     forecast["error_band_90"] = forecast["route_id"].map(bands).fillna(bundle["global_error_band_90"])
@@ -44,6 +43,21 @@ def main() -> None:
     forecast["predicted_passengers"] = forecast["predicted_passengers"].round(2)
     forecast["service_date"] = forecast["service_date"].dt.strftime("%Y-%m-%d")
     forecast = forecast.drop(columns="error_band_90")
+    return forecast
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", required=True, help="CSV with service_date, route_id, passengers")
+    parser.add_argument("--model", required=True, help="Model bundle produced by src.train")
+    parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--output", default="outputs/forecast.csv")
+    parser.add_argument("--missing-days", choices=["error", "zero"], default="error")
+    args = parser.parse_args()
+    try:
+        forecast = build_forecast(args.data, args.model, args.days, args.missing_days)
+    except ValueError as exc:
+        parser.error(str(exc))
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     forecast.to_csv(output, index=False)

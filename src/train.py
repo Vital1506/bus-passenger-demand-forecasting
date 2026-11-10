@@ -61,24 +61,24 @@ def rolling_backtest(data: pd.DataFrame, horizon: int, folds: int) -> tuple[pd.D
     return joined, model_metrics, baseline_metrics
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", required=True, help="CSV with service_date, route_id, passengers")
-    parser.add_argument("--model-out", default="artifacts/model.joblib")
-    parser.add_argument("--horizon", type=int, default=7)
-    parser.add_argument("--folds", type=int, default=4)
-    parser.add_argument("--missing-days", choices=["error", "zero"], default="error")
-    parser.add_argument("--metrics-out", default="artifacts/backtest_metrics.json")
-    parser.add_argument("--predictions-out", default="artifacts/backtest_predictions.csv")
-    args = parser.parse_args()
-    if args.horizon < 1 or args.folds < 1:
-        parser.error("--horizon and --folds must be positive")
-    if args.horizon > 90:
-        parser.error("--horizon cannot exceed 90 days")
-    raw = load_data(args.data)
-    data = complete_daily_series(raw, missing_days=args.missing_days)
-    backtest, model_scores, baseline_scores = rolling_backtest(data, args.horizon, args.folds)
-    print(f"Rolling-origin backtest: {args.folds} folds × {args.horizon} days")
+def train_project(
+    data_path: str | Path,
+    model_out: str | Path = "artifacts/model.joblib",
+    horizon: int = 7,
+    folds: int = 4,
+    missing_days: str = "error",
+    metrics_out: str | Path = "artifacts/backtest_metrics.json",
+    predictions_out: str | Path = "artifacts/backtest_predictions.csv",
+) -> dict:
+    """Train, backtest, save the model bundle, and return API-safe run details."""
+    if horizon < 1 or folds < 1:
+        raise ValueError("horizon and folds must be positive")
+    if horizon > 90:
+        raise ValueError("horizon cannot exceed 90 days")
+    raw = load_data(str(data_path))
+    data = complete_daily_series(raw, missing_days=missing_days)
+    backtest, model_scores, baseline_scores = rolling_backtest(data, horizon, folds)
+    print(f"Rolling-origin backtest: {folds} folds × {horizon} days")
     for label, score in (("ML model", model_scores), ("Seasonal-naive baseline", baseline_scores)):
         print(f"{label}: MAE={score['mae']:.2f} RMSE={score['rmse']:.2f} WAPE={score['wape']:.2%}")
     if model_scores["wape"] > baseline_scores["wape"]:
@@ -92,14 +92,14 @@ def main() -> None:
         }
         print(f"Route {route}: model WAPE={route_metrics[str(route)]['model']['wape']:.2%}; seasonal-naive WAPE={route_metrics[str(route)]['seasonal_naive']['wape']:.2%}")
 
-    metrics_path = Path(args.metrics_out)
+    metrics_path = Path(metrics_out)
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_path.write_text(json.dumps({
-        "backtest_folds": args.folds, "horizon_days": args.horizon,
+        "backtest_folds": folds, "horizon_days": horizon,
         "model": model_scores, "seasonal_naive": baseline_scores,
         "by_route": route_metrics,
     }, indent=2), encoding="utf-8")
-    predictions_path = Path(args.predictions_out)
+    predictions_path = Path(predictions_out)
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
     backtest.to_csv(predictions_path, index=False)
 
@@ -115,10 +115,10 @@ def main() -> None:
         "model": model,
         "features": FEATURE_COLUMNS,
         "routes": sorted(data["route_id"].astype(str).unique()),
-        "horizon": args.horizon,
+        "horizon": horizon,
         "model_version": "0.2.0",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "data_sha256": hashlib.sha256(Path(args.data).read_bytes()).hexdigest(),
+        "data_sha256": hashlib.sha256(Path(data_path).read_bytes()).hexdigest(),
         "package_versions": {"pandas": pd.__version__, "scikit_learn": sklearn.__version__, "joblib": joblib.__version__},
         "interval_method": "rolling-origin 90th percentile absolute residual; symmetric and approximate",
         "global_error_band_90": global_band,
@@ -127,12 +127,47 @@ def main() -> None:
         "backtest_baseline_metrics": baseline_scores,
         "trained_through": data["service_date"].max().date().isoformat(),
     }
-    output = Path(args.model_out)
+    output = Path(model_out)
     output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, output)
     print(f"Saved model bundle: {output}")
     print(f"Saved backtest metrics: {metrics_path}")
     print(f"Saved backtest predictions: {predictions_path}")
+    return {
+        "horizon_days": horizon,
+        "backtest_folds": folds,
+        "trained_through": bundle["trained_through"],
+        "routes": bundle["routes"],
+        "model_metrics": model_scores,
+        "seasonal_naive_metrics": baseline_scores,
+        "by_route": route_metrics,
+        "model_version": bundle["model_version"],
+        "created_at_utc": bundle["created_at_utc"],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", required=True, help="CSV with service_date, route_id, passengers")
+    parser.add_argument("--model-out", default="artifacts/model.joblib")
+    parser.add_argument("--horizon", type=int, default=7)
+    parser.add_argument("--folds", type=int, default=4)
+    parser.add_argument("--missing-days", choices=["error", "zero"], default="error")
+    parser.add_argument("--metrics-out", default="artifacts/backtest_metrics.json")
+    parser.add_argument("--predictions-out", default="artifacts/backtest_predictions.csv")
+    args = parser.parse_args()
+    try:
+        train_project(
+            data_path=args.data,
+            model_out=args.model_out,
+            horizon=args.horizon,
+            folds=args.folds,
+            missing_days=args.missing_days,
+            metrics_out=args.metrics_out,
+            predictions_out=args.predictions_out,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

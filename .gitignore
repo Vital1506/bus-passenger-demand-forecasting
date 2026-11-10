@@ -3,3 +3,8 @@ __pycache__/
 *.py[cod]
 artifacts/
 outputs/forecast.csv
+dist/
+build/
+*.spec
+.pytest_cache/
+.ruff_cache/

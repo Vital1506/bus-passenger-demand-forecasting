@@ -4,6 +4,45 @@ An operationally oriented Python baseline for **daily passenger boardings per ro
 
 This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
 
+## App clients
+
+The repository now includes a small operator dashboard backed by the existing Python forecasting engine:
+
+- **Windows desktop:** `desktop_launcher.py` starts a local API and opens the dashboard in a native WebView window. Daily counts and model artifacts are stored under the signed-in Windows user's local application data folder. By default, the service binds only to `127.0.0.1`.
+- **Android:** the responsive dashboard is an installable Progressive Web App (PWA). Serve the API and dashboard on an approved HTTPS host, open that URL in Chrome on Android, and choose **Install app** or **Add to Home screen**. It is not currently a Play Store APK.
+- **Shared service:** both clients can use the same API address. Open **Settings** in the app to enter the service URL and, on a protected host, the bearer access key. Hosting and a persistent data volume are required for cross-device shared state.
+
+“Real time” here means a forecast is refreshed when new daily counts are uploaded. It is not a live vehicle or ticketing feed. The company data connector, service calendar, SSO/roles, monitoring, and production sign-off still depend on the operator's systems and policies.
+
+### Try the dashboard locally
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-desktop.txt
+python desktop_launcher.py
+```
+
+In the dashboard, select **Try the synthetic demo** for a complete walkthrough or upload a CSV with `service_date`, `route_id`, and `passengers`. The demo data is synthetic and its scores are not evidence of company model performance. New uploads are checked for invalid rows and missing route dates. After data arrives, an existing model refreshes the forecast; otherwise choose **Train / retrain model**. The first training run requires at least 90 continuous service dates per route for the default four-fold, seven-day backtest.
+
+### Get the Windows app
+
+The **Build Windows desktop app** GitHub Actions workflow packages a Windows build after relevant changes land on `main`. Open the repository's Actions tab, select the latest successful **Build Windows desktop app** run, and download its `BusDemandForecast-Windows` artifact. Extract the ZIP and run `BusDemandForecast.exe` from the included folder. The workflow artifact expires after 30 days; rebuild or retain it according to your release process.
+
+### Host for Android and shared use
+
+The repository includes a Docker image for an approved Linux host. It requires a bearer key and should be served behind HTTPS. Mount persistent storage at `/var/lib/bus-forecast`; otherwise uploads and model files can be lost when the container is replaced.
+
+```bash
+docker build -t bus-demand-forecast .
+docker run --rm -p 8000:8000 \
+  -e BUS_FORECAST_API_KEY='replace-with-a-long-random-secret' \
+  -v bus-demand-data:/var/lib/bus-forecast \
+  bus-demand-forecast
+```
+
+Configure the host's HTTPS domain and Android-device access with your infrastructure administrator before using operational data. If the Windows desktop client will connect to that hosted API, configure `BUS_FORECAST_CORS_ORIGINS` on the API for the desktop origins `http://127.0.0.1:8765` and `http://localhost:8765`. The hosted mode's shared bearer key is a prototype access gate, not company SSO or role-based authorization. Use only approved infrastructure and data until authentication, retention, backups, access controls, privacy review, and operational sign-off are complete.
+
 ## Forecast contract
 
 - Grain: one row per route and calendar service date.

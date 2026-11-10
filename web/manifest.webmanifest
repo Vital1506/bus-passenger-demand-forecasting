@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Bus Demand Forecast",
+  "short_name": "Route Signal",
+  "description": "Daily route level passenger demand forecasts for service planning.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f7fa",
+  "theme_color": "#101a2c",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
