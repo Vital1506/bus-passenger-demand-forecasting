@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false };
+const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview" };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
@@ -99,6 +99,7 @@ function renderChart(rows) {
 }
 function render(data) {
   state.data = data;
+  state.lastCheckedAt = new Date();
   $("#routeCount").textContent = data.data_loaded ? Number(data.route_count).toLocaleString() : "—";
   $("#rowCount").textContent = data.data_loaded ? `${Number(data.rows).toLocaleString()} route day records` : "Upload route counts to begin";
   $("#latestDate").textContent = prettyDate(data.latest_observed_date);
@@ -113,7 +114,83 @@ function render(data) {
   $("#workflowNote").textContent = state.publicDemo ? "This public preview is read-only. An authorized operator key is required to upload data or train a model." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
   renderChart(data.forecasts);
   renderTable(data.forecasts);
+  renderExtraPages(data);
 }
+
+const PAGE_INFO = {
+  overview: ["Overview", "A quick read on service demand and forecast freshness."],
+  forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
+  routes: ["Routes", "Compare forecast totals and validation scores by route."],
+  data: ["Data", "Inspect source coverage, freshness, and ingestion guidance."],
+  model: ["Model", "Review model performance against a time-based baseline."]
+};
+function hideSplash() { const splash = $("#appSplash"); if (splash) splash.classList.add("is-hidden"); }
+function navigate(view, updateHash = true) {
+  if (!PAGE_INFO[view]) view = "overview";
+  state.view = view;
+  document.querySelectorAll("[data-pages]").forEach((node) => {
+    const pages = (node.dataset.pages || "").split(/\\s+/);
+    node.hidden = !pages.includes(view);
+  });
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    if (button.dataset.view === view) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  $("#pageTitle").textContent = PAGE_INFO[view][0];
+  $("#pageSummary").textContent = PAGE_INFO[view][1];
+  if (updateHash && location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
+  if (view === "forecasts" && state.data) renderChart(state.data.forecasts);
+}
+function renderRoutes(data) {
+  const forecasts = Array.isArray(data.forecasts) ? data.forecasts : [];
+  const groups = new Map();
+  for (const row of forecasts) {
+    const route = String(row.route_id ?? "Unknown");
+    const item = groups.get(route) || { total: 0, days: new Set() };
+    item.total += Number(row.predicted_passengers) || 0;
+    item.days.add(row.service_date);
+    groups.set(route, item);
+  }
+  const metrics = data.metrics?.by_route || {};
+  const routes = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+  const total = routes.reduce((sum, [, item]) => sum + item.total, 0);
+  const days = new Set(forecasts.map((item) => item.service_date)).size;
+  $("#routesTotal").textContent = routes.length.toLocaleString();
+  $("#routesBoardings").textContent = Math.round(total).toLocaleString();
+  $("#routesDailyAverage").textContent = routes.length && days ? Math.round(total / (routes.length * days)).toLocaleString() : "—";
+  $("#routeRows").innerHTML = routes.length ? routes.map(([route, item]) => {
+    const score = metrics[route] || {};
+    return `<tr><td><span class="route-pill">${escapeText(route)}</span></td><td class="numeric passenger-count">${Math.round(item.total).toLocaleString()}</td><td class="numeric">${Math.round(item.total / Math.max(item.days.size, 1)).toLocaleString()}</td><td class="numeric">${percent(score.model?.wape)}</td><td class="numeric">${percent(score.seasonal_naive?.wape)}</td></tr>`;
+  }).join("") : '<tr class="empty-row"><td colspan="5">No forecast is available yet. Train a model after adding route counts.</td></tr>';
+}
+function renderModel(data) {
+  const model = data.metrics?.model || {}, baseline = data.metrics?.seasonal_naive || {};
+  $("#modelPageWape").textContent = percent(model.wape);
+  $("#modelPageBaseline").textContent = percent(baseline.wape);
+  const mw = Number(model.wape), bw = Number(baseline.wape);
+  $("#modelWinner").textContent = Number.isFinite(mw) && Number.isFinite(bw) ? (mw <= bw ? "Model leads" : "Baseline leads") : "Not evaluated";
+  $("#modelTrainedThrough").textContent = data.model_trained ? prettyDate(data.trained_through) : "Not trained";
+  const metrics = data.metrics?.by_route || {};
+  const rows = Object.entries(metrics).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  $("#modelRows").innerHTML = rows.length ? rows.map(([route, score]) => {
+    const mwape = Number(score.model?.wape), bwape = Number(score.seasonal_naive?.wape);
+    const winner = Number.isFinite(mwape) && Number.isFinite(bwape) ? (mwape <= bwape ? "Model" : "Seasonal baseline") : "Not evaluated";
+    return `<tr><td><span class="route-pill">${escapeText(route)}</span></td><td class="numeric">${percent(score.model?.wape)}</td><td class="numeric">${percent(score.seasonal_naive?.wape)}</td><td>${winner}</td></tr>`;
+  }).join("") : '<tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr>';
+}
+function renderDataPage(data) {
+  const source = data.source === "synthetic demo data" ? "Synthetic demo" : data.source === "company upload" ? "Company upload" : "No data";
+  $("#dataSource").textContent = source;
+  $("#dataRows").textContent = data.data_loaded ? Number(data.rows).toLocaleString() : "—";
+  $("#dataRoutes").textContent = data.data_loaded ? Number(data.route_count).toLocaleString() : "—";
+  $("#dataLatest").textContent = prettyDate(data.latest_observed_date);
+  const checked = state.lastCheckedAt ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(state.lastCheckedAt) : "—";
+  const forecasted = data.forecast_updated_at ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(data.forecast_updated_at)) : "not generated";
+  $("#dataFreshness").textContent = data.forecast_updated_at ? `Forecast generated ${forecasted}` : "No forecast has been generated";
+  $("#dataGuidance").textContent = `Last service check: ${checked}. This page checks the connected API every 60 seconds while open. New daily counts update forecasts after ingestion and model refresh.`;
+}
+function renderExtraPages(data) { renderRoutes(data); renderModel(data); renderDataPage(data); }
+
 function setPublicDemoMode(enabled) {
   state.publicDemo = enabled;
   [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays")].forEach((node) => { if (node) node.disabled = enabled || state.busy; });
@@ -141,6 +218,7 @@ async function refreshStatus() {
     render(await api("/api/public-demo/status"));
     setConnection(true);
   } catch (error) { setConnection(false); if (error.message.includes("access key")) toast(error.message, true); }
+  finally { hideSplash(); }
 }
 async function withBusy(label, operation) {
   if (state.busy) return;
@@ -155,6 +233,11 @@ async function train(options = {}) {
   return api("/api/train", { method: "POST", body: JSON.stringify({ horizon, folds, missing_days: $("#missingDays").value }) });
 }
 function setup() {
+  const initialView = location.hash.slice(1);
+  navigate(PAGE_INFO[initialView] ? initialView : "overview", false);
+  window.setTimeout(hideSplash, 900);
+  $("#mainNav").addEventListener("click", (event) => { const button = event.target.closest("[data-view]"); if (button) navigate(button.dataset.view); });
+  window.addEventListener("hashchange", () => { const view = location.hash.slice(1); if (PAGE_INFO[view]) navigate(view, false); });
   $("#settingsButton").addEventListener("click", () => { $("#apiKey").value = accessKey(); $("#apiUrl").value = localStorage.getItem("busForecastApiUrl") || ""; $("#settingsDialog").showModal(); });
   $("#saveKey").addEventListener("click", () => { const key = $("#apiKey").value.trim(), rawUrl = $("#apiUrl").value.trim(); if (rawUrl) { try { const parsed = new URL(rawUrl); if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(); localStorage.setItem("busForecastApiUrl", parsed.origin); } catch (_) { toast("Enter a valid API address starting with http:// or https://", true); return; } } else localStorage.removeItem("busForecastApiUrl"); key ? localStorage.setItem("busForecastApiKey", key) : localStorage.removeItem("busForecastApiKey"); $("#settingsDialog").close(); refreshStatus(); });
   $("#clearKey").addEventListener("click", () => { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); $("#apiKey").value = ""; $("#apiUrl").value = ""; toast("Connection reset on this device"); });
