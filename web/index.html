@@ -115,8 +115,9 @@
             <div id="operatorControls">
               <div class="flow-step"><span class="step-number">01</span><div><strong>Upload daily passenger counts</strong><p>Choose a CSV with <code>service_date</code>, <code>route_id</code>, and <code>passengers</code>.</p></div></div>
               <label id="dropzone" class="dropzone" for="csvFile"><span class="upload-mark">↑</span><span><strong>Choose a CSV file</strong><small>or drop it here · up to 20 MB</small></span><input id="csvFile" type="file" accept=".csv,text/csv" /></label>
+              <p class="schedule-note">Passenger counts need <code>service_date</code>, <code>route_id</code>, <code>passengers</code>. A timetable with <code>From</code>/<code>To</code> creates an illustrative synthetic scenario, not observed passenger demand.</p>
               <div class="flow-controls"><label for="missingDays">Missing dates</label><select id="missingDays"><option value="error">Flag missing dates</option><option value="zero">Treat as zero</option></select><a id="downloadSample" href="/api/template.csv" class="text-link" download>Download sample CSV</a></div>
-              <button id="demoButton" class="demo-button" type="button">Load synthetic demo data <span>↗</span></button>
+              <button id="demoButton" class="demo-button" type="button">Load sample into workspace <span>↗</span></button>
               <div class="flow-divider"></div>
               <div class="flow-step"><span class="step-number">02</span><div><strong>Train and compare</strong><p>Check the model against a same-weekday baseline before using results.</p></div></div>
               <div class="training-controls"><label for="trainDays">Forecast horizon</label><select id="trainDays"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select><button id="trainButton" class="button button-primary" type="button">Train model <span>→</span></button></div>

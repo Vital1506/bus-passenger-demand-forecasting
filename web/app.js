@@ -45,7 +45,7 @@ function toast(message, error = false) {
 }
 function setBusy(busy, label = "Working…") {
   state.busy = busy;
-  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton")].forEach((node) => { if (node) node.disabled = busy; });
+  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
   $("#trainButton").innerHTML = busy ? `${label} <span>···</span>` : "Train / retrain model <span>→</span>";
 }
 function prettyDate(value) {
@@ -86,6 +86,7 @@ function renderChart(rows) {
     grouped.set(row.service_date, group);
   }
   const points = [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const chartColor = getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#8050d8";
   const width = Math.max(560, svg.parentElement.clientWidth || 560), height = 238;
   const pad = { left: 44, right: 15, top: 20, bottom: 33 };
   const max = Math.max(...points.map((p) => p.high), 1) * 1.12;
@@ -96,12 +97,12 @@ function renderChart(rows) {
   const bandBottom = points.slice().reverse().map((p, j) => { const i = points.length - 1 - j; return `L${x(i).toFixed(1)},${y(p.low).toFixed(1)}`; }).join(" ");
   const grid = [0, .33, .66, 1].map((part) => {
     const value = max * part, yy = y(value);
-    return `<line x1="${pad.left}" y1="${yy}" x2="${width - pad.right}" y2="${yy}" stroke="#e9eef5"/><text x="${pad.left - 9}" y="${yy + 3}" text-anchor="end" fill="#9aa6b7" font-size="9" font-family="DM Mono,monospace">${Math.round(value / 1000)}k</text>`;
+    return `<line x1="${pad.left}" y1="${yy}" x2="${width - pad.right}" y2="${yy}" stroke="#ece4f4"/><text x="${pad.left - 9}" y="${yy + 3}" text-anchor="end" fill="#877c94" font-size="9" font-family="DM Mono,monospace">${Math.round(value / 1000)}k</text>`;
   }).join("");
-  const xLabels = points.map((p, i) => (points.length <= 7 || i % Math.ceil(points.length / 7) === 0 || i === points.length - 1) ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle" fill="#98a4b4" font-size="9" font-family="DM Mono,monospace">${escapeText(p.date.slice(5))}</text>` : "").join("");
-  const dots = points.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.value)}" r="3.2" fill="#fff" stroke="#3479ee" stroke-width="2"><title>${escapeText(p.date)} · ${Math.round(p.value).toLocaleString()} boardings</title></circle>`).join("");
+  const xLabels = points.map((p, i) => (points.length <= 7 || i % Math.ceil(points.length / 7) === 0 || i === points.length - 1) ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle" fill="#877c94" font-size="9" font-family="DM Mono,monospace">${escapeText(p.date.slice(5))}</text>` : "").join("");
+  const dots = points.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.value)}" r="3.2" fill="#fff" stroke="${getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#8050d8"}" stroke-width="2"><title>${escapeText(p.date)} · ${Math.round(p.value).toLocaleString()} boardings</title></circle>`).join("");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${grid}<path d="${bandTop} ${bandBottom} Z" fill="#b7cef4" opacity=".42"/><path d="${line}" fill="none" stroke="#3479ee" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>${dots}${xLabels}`;
+  svg.innerHTML = `${grid}<path d="${bandTop} ${bandBottom} Z" fill="#cbb2ed" opacity=".42"/><path d="${line}" fill="none" stroke="#8050d8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>${dots}${xLabels}`;
   const total = points.reduce((sum, point) => sum + point.value, 0);
   $("#chartRange").textContent = `${points.length} days · ${Math.round(total).toLocaleString()} predicted boardings`;
 }
@@ -116,10 +117,10 @@ function render(data) {
   $("#modelCompare").textContent = Number.isFinite(ml) && Number.isFinite(baseline) ? `Baseline ${percent(baseline)} · ${ml <= baseline ? "model leads" : "baseline leads"}` : "Rolling time based validation";
   $("#horizonLabel").textContent = data.model_trained ? `${data.horizon_days} days` : "—";
   $("#modelState").textContent = data.model_trained ? `Trained through ${prettyDate(data.trained_through)}` : "No model trained";
-  const source = data.source === "synthetic demo data" ? "Synthetic sample data" : data.source === "company upload" ? "Operator data uploaded" : "Waiting for data";
+  const source = data.source === "synthetic demo data" ? "Synthetic sample data" : data.source === "synthetic schedule demo data" ? "Synthetic timetable scenario" : data.source === "synthetic schedule demo data" ? "Synthetic timetable scenario" : data.source === "company upload" ? "Operator data uploaded" : "Waiting for data";
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
-  $("#workflowNote").textContent = state.publicDemo ? "This public preview is read-only. An authorized operator key is required to upload data or train a model." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
+  $("#workflowNote").textContent = state.publicDemo ? (state.operatorAccess ? "Synthetic preview shown because no operator data is loaded yet. Upload daily counts, or a timetable to create a labelled synthetic scenario." : "This public preview is read-only. An authorized operator key is required to upload data or train a model.") : data.source === "synthetic schedule demo data" ? "This timetable-based scenario is synthetic, not observed passenger demand. Replace it with actual passenger counts before operational use." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
   renderChart(data.forecasts);
   renderTable(data.forecasts);
   renderExtraPages(data);
@@ -303,10 +304,11 @@ function renderDataPage(data) {
 }
 function renderExtraPages(data) { renderRoutes(data); renderModel(data); renderDataPage(data); }
 
-function setPublicDemoMode(enabled) {
+function setPublicDemoMode(enabled, allowOperatorEdits = false) {
   state.publicDemo = enabled;
-  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays")].forEach((node) => { if (node) node.disabled = enabled || state.busy; });
-  $("#operatorControls").classList.toggle("hidden", enabled);
+  state.operatorAccess = allowOperatorEdits;
+  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays")].forEach((node) => { if (node) node.disabled = state.busy || (enabled && !allowOperatorEdits); });
+  $("#operatorControls").classList.toggle("hidden", enabled && !allowOperatorEdits);
   $("#publicInfo").classList.toggle("hidden", !enabled);
   $("#operatorForecastTools").classList.toggle("hidden", enabled);
   $("#publicForecastBadge").classList.toggle("hidden", !enabled);
@@ -331,11 +333,24 @@ async function refreshStatus() {
       }, 8000);
     }
     if (accessKey()) {
-      try { setPublicDemoMode(false); render(await api("/api/status")); setConnection(true); connected = true; }
-      catch (error) { if (!error.message.includes("access key")) throw error; }
+      try {
+        const operatorStatus = await api("/api/status");
+        if (operatorStatus.data_loaded) {
+          setPublicDemoMode(false);
+          render(operatorStatus);
+        } else {
+          setPublicDemoMode(true, true);
+          if (state.opening) setSplashStatus("Loading the synthetic sample forecast…");
+          render(await api("/api/public-demo/status"));
+        }
+        setConnection(true);
+        connected = true;
+      } catch (error) {
+        if (!error.message.includes("access key")) throw error;
+      }
     }
     if (!connected) {
-      setPublicDemoMode(true);
+      setPublicDemoMode(true, false);
       if (state.opening) setSplashStatus("Loading the synthetic sample forecast…");
       render(await api("/api/public-demo/status"));
       setConnection(true);
@@ -352,7 +367,7 @@ async function refreshStatus() {
 async function withBusy(label, operation) {
   if (state.busy) return;
   setBusy(true, label);
-  try { const result = await operation(); if (result.message) toast(result.message); if (result.status) render(result.status); else await refreshStatus(); }
+  try { const result = await operation(); if (result.message) toast(result.message); if (result.status) { setPublicDemoMode(Boolean(result.status.public_demo), Boolean(result.status.public_demo ? false : result.status.data_loaded)); render(result.status); } else await refreshStatus(); }
   catch (error) { toast(error.message || "Something went wrong", true); }
   finally { setBusy(false); }
 }

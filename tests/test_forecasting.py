@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.forecasting import add_features, complete_daily_series, load_data
 from src.modeling import seasonal_naive_forecast
+from src.schedule_import import schedules_to_synthetic_counts
 
 
 class ForecastingContractTests(unittest.TestCase):
@@ -39,6 +40,19 @@ class ForecastingContractTests(unittest.TestCase):
         first = baseline.loc[baseline["service_date"].eq(self.start + pd.Timedelta(days=40)), "baseline"].iloc[0]
         eighth = baseline.loc[baseline["service_date"].eq(self.start + pd.Timedelta(days=47)), "baseline"].iloc[0]
         self.assertEqual(first, eighth)
+
+
+    def test_timetable_import_creates_a_labelled_synthetic_route_panel(self):
+        timetable = b"From,To,Operator,Departure\nA,B,Transit Co,08:00\nA,B,Transit Co,09:00\nB,C,Transit Co,10:00\n"
+        result = schedules_to_synthetic_counts(timetable, days=60)
+        self.assertEqual(result["route_id"].nunique(), 2)
+        self.assertEqual(len(result), 120)
+        self.assertEqual(set(result.columns), {"service_date", "route_id", "passengers"})
+        self.assertTrue((result["passengers"] >= 0).all())
+
+    def test_timetable_import_requires_origin_and_destination_columns(self):
+        with self.assertRaisesRegex(ValueError, "From and To"):
+            schedules_to_synthetic_counts(b"Operator,Distance\nTransit Co,50\n", days=60)
 
 
 if __name__ == "__main__":

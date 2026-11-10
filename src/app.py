@@ -19,7 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .forecast import build_forecast
-from .forecasting import complete_daily_series, load_data
+from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
+from .schedule_import import schedules_to_synthetic_counts
 from .train import train_project
 
 
@@ -288,20 +289,30 @@ def public_demo_status() -> dict:
         if not sample.exists():
             raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
         demo_dir = Path(tempfile.mkdtemp(prefix="bus-forecast-public-demo-"))
+        demo_data_path = demo_dir / "daily_ridership.csv"
         model_path = demo_dir / "model.joblib"
         metrics_path = demo_dir / "metrics.json"
         predictions_path = demo_dir / "predictions.csv"
+        holdout_path = demo_dir / "holdout_predictions.csv"
         try:
+            data = load_data(str(sample))
+            original_dates = pd.DatetimeIndex(sorted(data["service_date"].unique()))
+            last_observed_date = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.Timedelta(days=1)
+            shifted_dates = pd.date_range(end=last_observed_date, periods=len(original_dates), freq="D")
+            date_map = dict(zip(original_dates, shifted_dates))
+            data["service_date"] = data["service_date"].map(date_map)
+            data.to_csv(demo_data_path, index=False)
             training = train_project(
-                data_path=sample,
+                data_path=demo_data_path,
                 model_out=model_path,
                 horizon=7,
                 folds=4,
                 metrics_out=metrics_path,
                 predictions_out=predictions_path,
+                holdout_predictions_out=holdout_path,
             )
-            data = load_data(str(sample))
-            forecasts = build_forecast(sample, model_path, 7, "error")
+            data = load_data(str(demo_data_path))
+            forecasts = build_forecast(demo_data_path, model_path, 7, "error")
             PUBLIC_DEMO_CACHE = {
                 "data_loaded": True,
                 "source": "synthetic demo data",
@@ -334,10 +345,20 @@ def public_demo_forecast_csv() -> Response:
 
 @app.get("/api/public-demo/sample.csv")
 def public_demo_sample_csv() -> Response:
+    payload = public_demo_status()
     sample = project_path("data/sample_daily_ridership.csv")
     if not sample.exists():
         raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
-    return FileResponse(sample, media_type="text/csv", filename="synthetic_daily_route_counts.csv")
+    data = load_data(str(sample))
+    original_dates = pd.DatetimeIndex(sorted(data["service_date"].unique()))
+    latest_date = pd.Timestamp(payload["latest_observed_date"])
+    shifted_dates = pd.date_range(end=latest_date, periods=len(original_dates), freq="D")
+    data["service_date"] = data["service_date"].map(dict(zip(original_dates, shifted_dates)))
+    return Response(
+        content=data.to_csv(index=False, date_format="%Y-%m-%d"),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="synthetic_daily_route_counts.csv"'},
+    )
 
 
 @app.post("/api/data/upload", dependencies=[Depends(authorize), Depends(protect_pipeline)])
@@ -353,19 +374,42 @@ def upload_data(
     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as temporary_file:
         temporary_path = Path(temporary_file.name)
         temporary_file.write(contents)
+    imported_schedule = False
     try:
         try:
-            data = load_data(str(temporary_path))
-            complete_daily_series(data, missing_days=missing_days)
-        except (UnicodeDecodeError, pd.errors.ParserError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            headers = set(pd.read_csv(temporary_path, nrows=0, encoding="utf-8-sig").columns)
+        except (UnicodeDecodeError, pd.errors.ParserError) as exc:
+            raise HTTPException(status_code=422, detail="The CSV could not be read. Save it as UTF-8 CSV and try again.") from exc
+        if REQUIRED_COLUMNS.issubset(headers):
+            try:
+                data = load_data(str(temporary_path))
+                complete_daily_series(data, missing_days=missing_days)
+            except (UnicodeDecodeError, pd.errors.ParserError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        else:
+            try:
+                data = schedules_to_synthetic_counts(contents)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            imported_schedule = True
+            contents = data.to_csv(index=False).encode("utf-8")
         replace_path = DATA_PATH.with_suffix(".uploading")
         replace_path.write_bytes(contents)
         replace_path.replace(DATA_PATH)
     finally:
         temporary_path.unlink(missing_ok=True)
-    write_metadata("company upload", "manual_csv", len(data), int(data["route_id"].nunique()))
-    record_audit_event("replace_upload", "manual_csv", len(data), int(data["route_id"].nunique()))
+    if imported_schedule:
+        for artifact in (MODEL_PATH, METRICS_PATH, PREDICTIONS_PATH, HOLDOUT_PREDICTIONS_PATH, FORECAST_PATH, ARTIFACT_DIR / "error_analysis.json"):
+            artifact.unlink(missing_ok=True)
+    source = "synthetic schedule demo data" if imported_schedule else "company upload"
+    source_system = "synthetic_schedule_scenario" if imported_schedule else "manual_csv"
+    write_metadata(source, source_system, len(data), int(data["route_id"].nunique()))
+    record_audit_event("synthetic_schedule_import" if imported_schedule else "replace_upload", source_system, len(data), int(data["route_id"].nunique()))
+    if imported_schedule:
+        return {
+            "message": f"Timetable accepted for {int(data['route_id'].nunique())} routes. Generated 730 days of synthetic demonstration counts from schedule frequency; these are NOT measured passenger counts. Train the model to view the illustrative forecast.",
+            "status": status_payload(),
+        }
     forecast_message = "Data saved. Train a model to create the first forecast."
     if MODEL_PATH.exists():
         try:
