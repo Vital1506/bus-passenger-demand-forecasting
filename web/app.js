@@ -129,7 +129,7 @@ function navigate(view, updateHash = true) {
   if (!PAGE_INFO[view]) view = "overview";
   state.view = view;
   document.querySelectorAll("[data-pages]").forEach((node) => {
-    const pages = (node.dataset.pages || "").split(/\\s+/);
+    const pages = (node.dataset.pages || "").split(/\s+/);
     node.hidden = !pages.includes(view);
   });
   document.querySelectorAll("[data-view]").forEach((button) => {
