@@ -392,7 +392,6 @@ function setPublicDemoMode(enabled, allowOperatorEdits = false) {
   $("#operatorControls").classList.toggle("hidden", enabled && !allowOperatorEdits);
   $("#publicInfo").classList.toggle("hidden", !enabled);
   $("#operatorForecastTools").classList.remove("hidden");
-  $("#publicForecastBadge").classList.add("hidden");
   $("#refreshForecast").textContent = enabled ? "Update example" : "Refresh forecast";
   $("#heroCta").href = enabled ? "#forecast-panel" : "#workflowPanel";
   $("#heroCta").innerHTML = enabled ? "Explore the forecast <span>↓</span>" : "Upload daily counts <span>→</span>";

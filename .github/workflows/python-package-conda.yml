@@ -39,7 +39,7 @@ jobs:
         run: python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Test route suggestions and identity
-        run: node --test tests/route_catalog.test.mjs
+        run: node --test tests/*.test.mjs
 
       - name: Run tests
         run: python -m pytest -q
