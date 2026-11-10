@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: bus-demand-forecast
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: BUS_FORECAST_REQUIRE_AUTH
+        value: "true"
+      - key: BUS_FORECAST_API_KEY
+        generateValue: true
+      - key: BUS_FORECAST_DATA_DIR
+        value: /tmp/bus-forecast
