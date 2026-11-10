@@ -1,18 +1,26 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null };
+const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
-function api(path, options = {}) {
+async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (accessKey()) headers.set("Authorization", `Bearer ${accessKey()}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  return fetch(`${apiBase()}${path}`, { ...options, headers, cache: "no-store" }).then(async (response) => {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 90000);
+  try {
+    const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
     const payload = type.includes("json") ? await response.json() : await response.text();
     if (!response.ok) throw new Error(payload?.detail || payload || `Request failed (${response.status})`);
     return payload;
-  });
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("The forecast service took too long to respond. Retry or continue to the dashboard.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 async function downloadFile(path, filename) {
   const headers = new Headers();
@@ -129,6 +137,7 @@ function dismissSplash() {
   if (!state.opening) return;
   state.opening = false;
   clearTimeout(state.openingTimer);
+  clearTimeout(state.openingMessageTimer);
   const splash = $("#appSplash");
   if (splash) { splash.setAttribute("aria-busy", "false"); splash.classList.add("is-hidden"); }
   const shell = $("#appShell");
@@ -138,6 +147,7 @@ function dismissSplash() {
 }
 async function finishSplash(connected) {
   if (!state.opening) return;
+  clearTimeout(state.openingMessageTimer);
   const remaining = Math.max(0, 700 - (Date.now() - state.openingStartedAt));
   if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
   if (!state.opening) return;
@@ -313,7 +323,13 @@ function setPublicDemoMode(enabled) {
 async function refreshStatus() {
   let connected = false;
   try {
-    if (state.opening) setSplashStatus("Checking the forecast service…");
+    if (state.opening) {
+      setSplashStatus("Checking the forecast service…");
+      clearTimeout(state.openingMessageTimer);
+      state.openingMessageTimer = setTimeout(() => {
+        if (state.opening) setSplashStatus("Waking the demo service… Free hosting can take a little longer after idle.");
+      }, 8000);
+    }
     if (accessKey()) {
       try { setPublicDemoMode(false); render(await api("/api/status")); setConnection(true); connected = true; }
       catch (error) { if (!error.message.includes("access key")) throw error; }
@@ -357,6 +373,7 @@ function setup() {
     state.openingStartedAt = Date.now();
     $("#appSplash").classList.remove("is-error", "is-ready");
     $("#appSplash").setAttribute("aria-busy", "true");
+    clearTimeout(state.openingMessageTimer);
     $("#retryOpening").classList.add("hidden");
     $("#offlineOpening").classList.add("hidden");
     setSplashStatus("Checking the forecast service…");
