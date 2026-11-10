@@ -104,7 +104,7 @@
           <section id="forecast-panel" class="panel forecast-panel" data-pages="overview forecasts">
             <div class="panel-heading">
               <div><p class="eyebrow">DEMAND OUTLOOK</p><h2>Next service days</h2></div>
-              <div class="panel-tools"><span id="publicForecastBadge" class="horizon-badge hidden">Next 7 days</span><div id="operatorForecastTools" class="operator-forecast-tools"><label class="sr-only" for="forecastDays">Forecast horizon</label><select id="forecastDays" aria-label="Forecast horizon"><option value="7">Next 7 days</option><option value="3">Next 3 days</option><option value="14">Next 14 days</option><option value="28">Next 28 days</option></select><button id="refreshForecast" class="button button-quiet" type="button">Refresh forecast</button></div></div>
+              <div class="panel-tools"><div id="operatorForecastTools" class="operator-forecast-tools"><label class="sr-only" for="forecastRoute">Choose a route</label><select id="forecastRoute" aria-label="Choose a route"><option value="all">All routes</option></select><label class="sr-only" for="forecastDays">Forecast horizon</label><select id="forecastDays" aria-label="Forecast horizon"><option value="7">Next 7 days</option><option value="3">Next 3 days</option><option value="14">Next 14 days</option><option value="28">Next 28 days</option></select><button id="refreshForecast" class="button button-quiet" type="button">Refresh forecast</button></div></div>
             </div>
             <div id="chartWrap" class="chart-wrap"><div id="emptyChart" class="empty-state"><div class="empty-icon">⌁</div><strong>Your forecast will appear here</strong><span>Upload daily route counts or try the synthetic sample.</span></div><svg id="forecastChart" class="forecast-chart hidden" role="img" aria-label="Total predicted passengers by service date"></svg></div>
             <div class="chart-legend"><span><i class="legend-line"></i>Forecast total</span><span><i class="legend-band"></i>Approximate historical error range</span><span id="chartRange" class="chart-range">—</span></div>
@@ -135,8 +135,8 @@
             <div id="publicInfo" class="public-info hidden">
               <div class="demo-callout"><span class="demo-callout-icon">i</span><div><strong>You’re viewing an example</strong><p>These forecasts use synthetic passenger counts. They are here to show how the site works, not to represent a real bus service.</p></div></div>
               <ol class="demo-steps">
-                <li><strong>See how demand may change</strong><span>The chart combines the sample routes for each future day.</span></li>
-                <li><strong>Open Forecasts</strong><span>See the example estimate for each route and date.</span></li>
+                <li><strong>Choose a route and time range</strong><span>Use the controls above to explore 3, 7, 14, or 28 days of synthetic demand.</span></li>
+                <li><strong>Review or download estimates</strong><span>Filter the chart and table by route, then export the matching rows as CSV.</span></li>
                 <li><strong>Remember what it is</strong><span>It is generated sample data, not a prediction for your town or bus route.</span></li>
               </ol>
               <a id="publicDownloadSample" href="/api/public-demo/sample.csv" class="text-link sample-link" download>Download the synthetic sample data ↓</a>
@@ -196,3 +196,4 @@ Content-Type: application/json
     <script src="/static/app.js" defer></script>
   </body>
 </html>
+

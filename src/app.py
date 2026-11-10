@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -56,6 +56,7 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PIPELINE_LOCK = threading.Lock()
 PUBLIC_DEMO_LOCK = threading.Lock()
 PUBLIC_DEMO_CACHE: dict | None = None
+PUBLIC_DEMO_ARTIFACTS: dict[str, Path] = {}
 
 WEB_DIR = project_path("web")
 WEB_DIR.mkdir(parents=True, exist_ok=True)
@@ -277,14 +278,14 @@ def get_status() -> dict:
 
 
 @app.get("/api/public-demo/status")
-def public_demo_status() -> dict:
+def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
     """Return a cached, read-only synthetic forecast without touching operator data."""
     global PUBLIC_DEMO_CACHE
     if PUBLIC_DEMO_CACHE is not None:
-        return PUBLIC_DEMO_CACHE
+        return public_demo_forecast_for_days(days)
     with PUBLIC_DEMO_LOCK:
         if PUBLIC_DEMO_CACHE is not None:
-            return PUBLIC_DEMO_CACHE
+            return public_demo_forecast_for_days(days)
         sample = project_path("data/sample_daily_ridership.csv")
         if not sample.exists():
             raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
@@ -313,6 +314,7 @@ def public_demo_status() -> dict:
             )
             data = load_data(str(demo_data_path))
             forecasts = build_forecast(demo_data_path, model_path, 7, "error")
+            PUBLIC_DEMO_ARTIFACTS.update({"data": demo_data_path, "model": model_path})
             PUBLIC_DEMO_CACHE = {
                 "data_loaded": True,
                 "source": "synthetic demo data",
@@ -329,13 +331,37 @@ def public_demo_status() -> dict:
             }
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail="Could not build the synthetic public preview") from exc
-    return PUBLIC_DEMO_CACHE
+    return public_demo_forecast_for_days(days)
+
+
+def public_demo_forecast_for_days(days: int) -> dict:
+    """Return a read-only forecast horizon from the cached synthetic model."""
+    if PUBLIC_DEMO_CACHE is None:
+        raise HTTPException(status_code=503, detail="The synthetic demo model is not ready")
+    if days == PUBLIC_DEMO_CACHE["horizon_days"]:
+        return PUBLIC_DEMO_CACHE
+    data_path = PUBLIC_DEMO_ARTIFACTS.get("data")
+    model_path = PUBLIC_DEMO_ARTIFACTS.get("model")
+    if data_path is None or model_path is None:
+        raise HTTPException(status_code=503, detail="The synthetic demo model is not ready")
+    try:
+        forecast = build_forecast(data_path, model_path, days, "error")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Could not generate the synthetic forecast horizon") from exc
+    return {**PUBLIC_DEMO_CACHE, "horizon_days": days, "forecasts": forecast.to_dict(orient="records")}
 
 
 @app.get("/api/public-demo/forecast.csv")
-def public_demo_forecast_csv() -> Response:
-    payload = public_demo_status()
+def public_demo_forecast_csv(
+    days: int = Query(default=7, ge=1, le=28),
+    route_id: str | None = Query(default=None, min_length=1, max_length=128),
+) -> Response:
+    payload = public_demo_status(days)
     forecast = pd.DataFrame(payload["forecasts"])
+    if route_id:
+        forecast = forecast.loc[forecast["route_id"].astype(str) == route_id]
+        if forecast.empty:
+            raise HTTPException(status_code=404, detail="That route is not in the synthetic demo")
     return Response(
         content=forecast.to_csv(index=False),
         media_type="text/csv",
@@ -345,7 +371,7 @@ def public_demo_forecast_csv() -> Response:
 
 @app.get("/api/public-demo/sample.csv")
 def public_demo_sample_csv() -> Response:
-    payload = public_demo_status()
+    payload = public_demo_status(7)
     sample = project_path("data/sample_daily_ridership.csv")
     if not sample.exists():
         raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
@@ -528,10 +554,19 @@ def refresh_forecast(request: ForecastRequest) -> dict:
 
 
 @app.get("/api/forecast.csv", dependencies=[Depends(authorize)])
-def download_forecast() -> Response:
+def download_forecast(route_id: str | None = Query(default=None, min_length=1, max_length=128)) -> Response:
     if not FORECAST_PATH.exists():
         raise HTTPException(status_code=404, detail="No forecast has been generated yet")
-    return FileResponse(FORECAST_PATH, media_type="text/csv", filename="bus_demand_forecast.csv")
+    forecast = pd.read_csv(FORECAST_PATH)
+    if route_id:
+        forecast = forecast.loc[forecast["route_id"].astype(str) == route_id]
+        if forecast.empty:
+            raise HTTPException(status_code=404, detail="That route is not in the current forecast")
+    return Response(
+        content=forecast.to_csv(index=False),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="bus_demand_forecast.csv"'},
+    )
 
 
 @app.get("/api/template.csv", dependencies=[Depends(authorize)])
@@ -557,3 +592,4 @@ def home() -> FileResponse:
 @app.exception_handler(HTTPException)
 async def api_error_handler(_request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+

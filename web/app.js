@@ -45,7 +45,10 @@ function toast(message, error = false) {
 }
 function setBusy(busy, label = "Working…") {
   state.busy = busy;
-  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
+  [$("#csvFile"), $("#trainButton"), $("#demoButton"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
+  $("#refreshForecast").disabled = busy;
+  $("#forecastDays").disabled = busy;
+  $("#forecastRoute").disabled = busy;
   $("#trainButton").innerHTML = busy ? `${label} <span>···</span>` : "Train my forecast <span>→</span>";
 }
 function prettyDate(value) {
@@ -62,23 +65,39 @@ function setConnection(connected) {
 }
 function renderTable(rows) {
   const target = $("#forecastRows");
-  $("#downloadForecast").classList.toggle("disabled-link", !rows?.length);
-  if (!rows?.length) {
+  const visibleRows = filterForecastRows(rows);
+  $("#downloadForecast").classList.toggle("disabled-link", !visibleRows.length);
+  if (!visibleRows.length) {
     target.innerHTML = '<tr class="empty-row"><td colspan="4">Forecast rows will appear after model training.</td></tr>';
     return;
   }
-  target.innerHTML = rows.slice(0, 250).map((row) => `<tr><td>${prettyDate(row.service_date)}</td><td><span class="route-pill">${escapeText(row.route_id)}</span></td><td class="numeric passenger-count">${Math.round(Number(row.predicted_passengers)).toLocaleString()}</td><td class="numeric">${Math.round(Number(row.lower_90_approx)).toLocaleString()} – ${Math.round(Number(row.upper_90_approx)).toLocaleString()}</td></tr>`).join("");
+  target.innerHTML = visibleRows.slice(0, 250).map((row) => `<tr><td>${prettyDate(row.service_date)}</td><td><span class="route-pill">${escapeText(row.route_id)}</span></td><td class="numeric passenger-count">${Math.round(Number(row.predicted_passengers)).toLocaleString()}</td><td class="numeric">${Math.round(Number(row.lower_90_approx)).toLocaleString()} – ${Math.round(Number(row.upper_90_approx)).toLocaleString()}</td></tr>`).join("");
 }
 function escapeText(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
+function filterForecastRows(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  const selected = $("#forecastRoute")?.value || "all";
+  return selected === "all" ? items : items.filter((row) => String(row.route_id) === selected);
+}
+function syncForecastRoutes(rows) {
+  const select = $("#forecastRoute");
+  if (!select) return;
+  const previous = select.value || "all";
+  const routes = [...new Set((Array.isArray(rows) ? rows : []).map((row) => String(row.route_id ?? "")).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  select.replaceChildren(new Option("All routes", "all"), ...routes.map((route) => new Option(route, route)));
+  select.value = routes.includes(previous) ? previous : "all";
+}
 function renderChart(rows) {
   const svg = $("#forecastChart");
   const empty = $("#emptyChart");
-  if (!rows?.length) { svg.classList.add("hidden"); empty.classList.remove("hidden"); $("#chartRange").textContent = "—"; return; }
+  const visibleRows = filterForecastRows(rows);
+  if (!visibleRows.length) { svg.classList.add("hidden"); empty.classList.remove("hidden"); $("#chartRange").textContent = "—"; return; }
   svg.classList.remove("hidden"); empty.classList.add("hidden");
   const grouped = new Map();
-  for (const row of rows) {
+  for (const row of visibleRows) {
     const group = grouped.get(row.service_date) || { date: row.service_date, value: 0, low: 0, high: 0 };
     group.value += Number(row.predicted_passengers) || 0;
     group.low += Number(row.lower_90_approx) || 0;
@@ -102,9 +121,10 @@ function renderChart(rows) {
   const xLabels = points.map((p, i) => (points.length <= 7 || i % Math.ceil(points.length / 7) === 0 || i === points.length - 1) ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle" fill="#877c94" font-size="9" font-family="DM Mono,monospace">${escapeText(p.date.slice(5))}</text>` : "").join("");
   const dots = points.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.value)}" r="3.2" fill="#fff" stroke="${getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#8050d8"}" stroke-width="2"><title>${escapeText(p.date)} · ${Math.round(p.value).toLocaleString()} boardings</title></circle>`).join("");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${grid}<path d="${bandTop} ${bandBottom} Z" fill="#cbb2ed" opacity=".42"/><path d="${line}" fill="none" stroke="#8050d8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>${dots}${xLabels}`;
+  svg.innerHTML = `${grid}<path d="${bandTop} ${bandBottom} Z" fill="#cbb2ed" opacity=".42"/><path d="${line}" fill="none" stroke="${chartColor}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>${dots}${xLabels}`;
   const total = points.reduce((sum, point) => sum + point.value, 0);
-  $("#chartRange").textContent = `${points.length} days · ${Math.round(total).toLocaleString()} predicted boardings`;
+  const routeLabel = $("#forecastRoute")?.value;
+  $("#chartRange").textContent = `${points.length} days${routeLabel && routeLabel !== "all" ? ` · ${routeLabel}` : ""} · ${Math.round(total).toLocaleString()} predicted boardings`;
 }
 function render(data) {
   state.data = data;
@@ -121,6 +141,7 @@ function render(data) {
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
   $("#workflowNote").textContent = state.publicDemo ? (state.operatorAccess ? "Synthetic preview shown because no operator data is loaded yet. Upload daily counts, or a timetable to create a labelled synthetic scenario." : "This public preview is read-only. An authorized operator key is required to upload data or train a model.") : data.source === "synthetic schedule demo data" ? "This timetable-based scenario is synthetic, not observed passenger demand. Replace it with actual passenger counts before operational use." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
+  syncForecastRoutes(data.forecasts);
   renderChart(data.forecasts);
   renderTable(data.forecasts);
   renderExtraPages(data);
@@ -307,11 +328,15 @@ function renderExtraPages(data) { renderRoutes(data); renderModel(data); renderD
 function setPublicDemoMode(enabled, allowOperatorEdits = false) {
   state.publicDemo = enabled;
   state.operatorAccess = allowOperatorEdits;
-  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = state.busy || (enabled && !allowOperatorEdits); });
+  [$("#csvFile"), $("#trainButton"), $("#demoButton"), $("#missingDays"), $("#trainDays"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = state.busy || (enabled && !allowOperatorEdits); });
+  $("#forecastDays").disabled = state.busy;
+  $("#forecastRoute").disabled = state.busy;
+  $("#refreshForecast").disabled = state.busy;
   $("#operatorControls").classList.toggle("hidden", enabled && !allowOperatorEdits);
   $("#publicInfo").classList.toggle("hidden", !enabled);
-  $("#operatorForecastTools").classList.toggle("hidden", enabled);
-  $("#publicForecastBadge").classList.toggle("hidden", !enabled);
+  $("#operatorForecastTools").classList.remove("hidden");
+  $("#publicForecastBadge").classList.add("hidden");
+  $("#refreshForecast").textContent = enabled ? "Update example" : "Refresh forecast";
   $("#heroCta").href = enabled ? "#forecast-panel" : "#workflowPanel";
   $("#heroCta").innerHTML = enabled ? "Explore the forecast <span>↓</span>" : "Upload daily counts <span>→</span>";
   $("#demoBadge").classList.toggle("hidden", !enabled);
@@ -367,7 +392,7 @@ async function refreshStatus() {
 async function withBusy(label, operation) {
   if (state.busy) return;
   setBusy(true, label);
-  try { const result = await operation(); if (result.message) toast(result.message); if (result.status) { setPublicDemoMode(Boolean(result.status.public_demo), Boolean(result.status.public_demo ? false : result.status.data_loaded)); render(result.status); } else await refreshStatus(); }
+  try { const result = await operation(); if (result.message) toast(result.message); const updatedStatus = result.status || (result.public_demo ? result : null); if (updatedStatus) { setPublicDemoMode(Boolean(updatedStatus.public_demo), Boolean(updatedStatus.public_demo ? state.operatorAccess : updatedStatus.data_loaded)); render(updatedStatus); } else await refreshStatus(); }
   catch (error) {
     const message = error.message || "Something went wrong";
     if (/missing route\/date observations detected/i.test(message)) toast("This route has days without a count. Add the missing daily counts, or choose zero only for a confirmed no-service day.", true);
@@ -452,10 +477,13 @@ function setup() {
     });
   });
   $("#demoButton").addEventListener("click", () => withBusy("Running demo…", async () => { await api("/api/data/demo", { method: "POST" }); return train({ horizon: 7, folds: 4 }); }));
-  $("#refreshForecast").addEventListener("click", () => withBusy("Refreshing…", () => api("/api/forecast", { method: "POST", body: JSON.stringify({ days: Number($("#forecastDays").value), missing_days: $("#missingDays").value }) })));
-  $("#downloadForecast").addEventListener("click", (event) => { event.preventDefault(); const publicDemo = state.publicDemo; downloadFile(publicDemo ? "/api/public-demo/forecast.csv" : "/api/forecast.csv", publicDemo ? "bus_demand_synthetic_demo_forecast.csv" : "bus_demand_forecast.csv").catch((error) => toast(error.message, true)); });
+  $("#refreshForecast").addEventListener("click", () => withBusy(state.publicDemo ? "Updating example…" : "Refreshing…", () => state.publicDemo
+    ? api(`/api/public-demo/status?days=${Number($("#forecastDays").value)}`)
+    : api("/api/forecast", { method: "POST", body: JSON.stringify({ days: Number($("#forecastDays").value), missing_days: $("#missingDays").value }) })));
+  $("#forecastRoute").addEventListener("change", () => { if (state.data) { renderChart(state.data.forecasts); renderTable(state.data.forecasts); } });
+  $("#downloadForecast").addEventListener("click", (event) => { event.preventDefault(); const publicDemo = state.publicDemo; let path = publicDemo ? `/api/public-demo/forecast.csv?days=${Number($("#forecastDays").value)}` : "/api/forecast.csv"; if ($("#forecastRoute").value !== "all") path += `${path.includes("?") ? "&" : "?"}route_id=${encodeURIComponent($("#forecastRoute").value)}`; downloadFile(path, publicDemo ? "bus_demand_synthetic_demo_forecast.csv" : "bus_demand_forecast.csv").catch((error) => toast(error.message, true)); });
   $("#downloadSample").addEventListener("click", (event) => { event.preventDefault(); const publicDemo = state.publicDemo; downloadFile(publicDemo ? "/api/public-demo/sample.csv" : "/api/template.csv", publicDemo ? "synthetic_daily_route_counts.csv" : "daily_route_counts_sample.csv").catch((error) => toast(error.message, true)); });
-  $("#forecastDays").addEventListener("change", () => { if (state.data?.model_trained) $("#refreshForecast").click(); });
+  $("#forecastDays").addEventListener("change", () => { if (state.publicDemo || state.data?.model_trained) $("#refreshForecast").click(); });
   $("#csvFile").addEventListener("change", (event) => { const file = event.target.files?.[0]; if (!file) return; withBusy("Uploading…", async () => { const form = new FormData(); form.append("file", file); form.append("missing_days", $("#missingDays").value); return api("/api/data/upload", { method: "POST", body: form }); }).finally(() => { event.target.value = ""; }); });
   const drop = $("#dropzone");
   ["dragenter", "dragover"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.classList.add("dragover"); }));
