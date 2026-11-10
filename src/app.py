@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
+from .route_identity import canonicalize_manual_route_id
 from .schedule_import import schedules_to_synthetic_counts
 from .train import train_project
 
@@ -473,6 +474,16 @@ def ingest_daily_counts(request: DataIngestRequest) -> dict:
 
     try:
         current = load_data(str(DATA_PATH)) if DATA_PATH.exists() else pd.DataFrame(columns=["service_date", "route_id", "passengers"])
+        if source_system == "manual_daily_entry":
+            known_route_ids = set(current["route_id"].astype(str))
+            canonical_routes = []
+            for route_id in incoming["route_id"].astype(str):
+                canonical_route = canonicalize_manual_route_id(route_id, known_route_ids)
+                canonical_routes.append(canonical_route)
+                known_route_ids.add(canonical_route)
+            incoming["route_id"] = canonical_routes
+            if incoming.duplicated(keys).any():
+                raise HTTPException(status_code=422, detail="Batch contains duplicate service_date/route records after route-name normalization")
         existing_keys = set(zip(current["service_date"], current["route_id"]))
         incoming_keys = set(zip(incoming["service_date"], incoming["route_id"]))
         inserted_count = len(incoming_keys - existing_keys)
@@ -592,4 +603,5 @@ def home() -> FileResponse:
 @app.exception_handler(HTTPException)
 async def api_error_handler(_request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
 

@@ -223,6 +223,35 @@ body{background:radial-gradient(ellipse at 8% 0%,#eee4fb 0,transparent 34rem),li
 @keyframes metal-sheen{0%,58%{transform:translateX(-5%);opacity:.55}76%{transform:translateX(5%);opacity:1}100%{transform:translateX(-5%);opacity:.55}}
 @media(max-width:760px){.schedule-note{margin-left:0}.hero{background:linear-gradient(145deg,#211331,#49306c)}}
 @media(prefers-reduced-motion:reduce){.hero:before{animation:none}.metric-card,.panel{transition:none}}
+/* The opening screen follows the product's violet theme as well as the dashboard. */
+.app-splash{background:radial-gradient(ellipse at 78% 48%,#573c7d 0,#35214f 36%,transparent 68%),linear-gradient(125deg,#160f22,#28163e 66%,#392451);color:#fbf8ff}
+.app-splash:before,.app-splash:after{border-color:#d5b7ff24}
+.splash-mark{background:linear-gradient(145deg,#ffffff20,#ffffff08);border-color:#e7d6ff55;box-shadow:0 10px 35px #12091f77,inset 0 1px #ffffff3d}
+.splash-brand>div:nth-child(2) span,.splash-eyebrow,.splash-demo-label,.splash-footnote{color:#d1c1e5}
+.splash-prototype{border-color:#c9a8ff77;color:#e0caff}
+.splash-eyebrow i,.splash-demo-label i{background:#c8a4ff;box-shadow:0 0 0 5px #c8a4ff25}
+.splash-copy h1 em{color:#d9bcff}
+.splash-copy>p:not(.splash-eyebrow){color:#e0d6ed}
+.splash-features li{border-color:#eadcff2d;background:#ffffff0d;color:#eee5f7}
+.splash-features li span{color:#d3b3ff}
+.splash-orbit{border-color:#d9c0ff28}
+.splash-route{stroke:#d7b6ff}
+.splash-stop{stroke:#493263}
+.splash-route-card{fill:#35214d;stroke:#e4d4f644}
+.splash-route-label,.splash-stop-label{fill:#d0c0e2}
+.splash-route-value{fill:#fffaff}
+.splash-loading-row{color:#f3ebfc}
+.splash-progress{background:#ffffff25}
+.splash-progress i{background:linear-gradient(90deg,#d6b5ff,#a877ed,#f2d7ff)}
+.splash-actions .button-quiet{border-color:#eee0ff55;background:#ffffff10;color:#f4edfb}
+.splash-actions .button-quiet:hover{background:#ffffff1a}
+.splash-actions .button-primary{background:linear-gradient(135deg,#a77ae8,#8050d8 58%,#633bb2);border-color:#c5a4f2;box-shadow:inset 0 1px #ffffff68,0 6px 20px #10071f55}
+.splash-actions .button-primary:hover{background:linear-gradient(135deg,#b48cf0,#8d5ce0 58%,#7048c1)}
+.is-error .splash-progress i{background:#f0a48f}
+.route-catalog-hint{margin:8px 0 0 43px;padding:9px 11px;border-left:3px solid #9b7acb;border-radius:0 8px 8px 0;background:#f6f1fb;color:#57436d;font-size:10px;line-height:1.5}
+.quick-count-form input[list]:focus{border-color:#865dc4}
+@media(max-width:760px){.route-catalog-hint{margin-left:0}}
+@media(prefers-reduced-motion:reduce){.splash-actions .button-primary,.splash-mark{animation:none}}
 /* Beginner quick-entry flow with a restrained violet metallic finish. */
 :root{--ink:#28243a;--muted:#716b83;--line:#e5dfed;--paper:#f7f5fa;--panel:#fff;--navy:#291d3f;--blue:#7851c8;--cyan:#d4c1fb;--green:#287759;--accent:#c7a8f2;--soft:#f0eafa;--shadow:0 10px 28px rgba(53,35,77,.08)}
 body{background:radial-gradient(ellipse at 12% 0%,#eee6f7 0,transparent 34%),var(--paper);color:var(--ink)}
