@@ -49,6 +49,7 @@ METRICS_PATH = ARTIFACT_DIR / "backtest_metrics.json"
 PREDICTIONS_PATH = ARTIFACT_DIR / "backtest_predictions.csv"
 FORECAST_PATH = DATA_DIR / "forecast.csv"
 META_PATH = DATA_DIR / "data_source.json"
+AUDIT_PATH = DATA_DIR / "ingest_audit.jsonl"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PIPELINE_LOCK = threading.Lock()
 PUBLIC_DEMO_LOCK = threading.Lock()
@@ -107,6 +108,18 @@ class ForecastRequest(BaseModel):
     missing_days: Literal["error", "zero"] = "error"
 
 
+class DailyCountRecord(BaseModel):
+    service_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    route_id: str = Field(min_length=1, max_length=128)
+    passengers: float = Field(ge=0)
+
+
+class DataIngestRequest(BaseModel):
+    source_system: str = Field(default="company_feed", min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_. -]+$")
+    records: list[DailyCountRecord] = Field(min_length=1, max_length=5000)
+    missing_days: Literal["error", "zero"] = "error"
+
+
 def read_metadata() -> dict:
     if not META_PATH.exists():
         return {"source": "none"}
@@ -116,8 +129,61 @@ def read_metadata() -> dict:
         return {"source": "unknown"}
 
 
-def write_metadata(source: str) -> None:
-    META_PATH.write_text(json.dumps({"source": source}, indent=2), encoding="utf-8")
+def write_metadata(
+    source: str,
+    source_system: str | None = None,
+    record_count: int | None = None,
+    route_count: int | None = None,
+) -> None:
+    metadata = {"source": source, "updated_at_utc": pd.Timestamp.now(tz="UTC").isoformat()}
+    if source_system:
+        metadata["source_system"] = source_system
+    if record_count is not None:
+        metadata["record_count"] = int(record_count)
+    if route_count is not None:
+        metadata["route_count"] = int(route_count)
+    temporary = META_PATH.with_suffix(".tmp")
+    temporary.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    temporary.replace(META_PATH)
+
+
+def record_audit_event(action: str, source_system: str, record_count: int, route_count: int) -> None:
+    """Append an aggregate-only data operation event; never record passenger rows."""
+    event = {
+        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "action": action,
+        "source_system": source_system,
+        "record_count": int(record_count),
+        "route_count": int(route_count),
+    }
+    with AUDIT_PATH.open("a", encoding="utf-8") as audit_file:
+        audit_file.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+
+def read_recent_activity(limit: int = 12) -> list[dict]:
+    if not AUDIT_PATH.exists():
+        return []
+    try:
+        lines = AUDIT_PATH.read_text(encoding="utf-8").splitlines()[-limit:]
+        events = []
+        for line in lines:
+            try:
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    events.append(event)
+            except json.JSONDecodeError:
+                continue
+        return list(reversed(events))
+    except OSError:
+        return []
+
+
+def persist_daily_data(data: pd.DataFrame) -> None:
+    output = data[["service_date", "route_id", "passengers"]].copy()
+    output["service_date"] = pd.to_datetime(output["service_date"]).dt.strftime("%Y-%m-%d")
+    temporary = DATA_PATH.with_suffix(".uploading")
+    output.to_csv(temporary, index=False)
+    temporary.replace(DATA_PATH)
 
 
 def api_safe(value):
@@ -132,9 +198,13 @@ def api_safe(value):
 
 
 def status_payload() -> dict:
+    metadata = read_metadata()
     result = {
         "data_loaded": DATA_PATH.exists(),
-        "source": read_metadata().get("source", "none"),
+        "source": metadata.get("source", "none"),
+        "source_system": metadata.get("source_system"),
+        "data_updated_at": metadata.get("updated_at_utc"),
+        "recent_activity": read_recent_activity(),
         "rows": 0,
         "route_count": 0,
         "latest_observed_date": None,
@@ -293,7 +363,8 @@ def upload_data(
         replace_path.replace(DATA_PATH)
     finally:
         temporary_path.unlink(missing_ok=True)
-    write_metadata("company upload")
+    write_metadata("company upload", "manual_csv", len(data), int(data["route_id"].nunique()))
+    record_audit_event("replace_upload", "manual_csv", len(data), int(data["route_id"].nunique()))
     forecast_message = "Data saved. Train a model to create the first forecast."
     if MODEL_PATH.exists():
         try:
@@ -305,6 +376,64 @@ def upload_data(
             FORECAST_PATH.unlink(missing_ok=True)
             forecast_message = f"Data saved. Retrain the model before forecasting: {exc}"
     return {"message": forecast_message, "status": status_payload()}
+
+
+@app.post("/api/data/ingest", dependencies=[Depends(authorize), Depends(protect_pipeline)])
+def ingest_daily_counts(request: DataIngestRequest) -> dict:
+    """Idempotently upsert daily counts from a scheduled company export or integration."""
+    source_system = request.source_system.strip()
+    if not source_system:
+        raise HTTPException(status_code=422, detail="source_system cannot be blank")
+    incoming = pd.DataFrame([record.model_dump() for record in request.records])
+    incoming["service_date"] = pd.to_datetime(incoming["service_date"], errors="coerce").dt.normalize()
+    incoming["route_id"] = incoming["route_id"].astype("string").str.strip()
+    incoming["passengers"] = pd.to_numeric(incoming["passengers"], errors="coerce")
+    if incoming["service_date"].isna().any():
+        raise HTTPException(status_code=422, detail="service_date must use YYYY-MM-DD")
+    if incoming["route_id"].isna().any() or incoming["route_id"].eq("").any():
+        raise HTTPException(status_code=422, detail="route_id cannot be blank")
+    if incoming["passengers"].isna().any() or not incoming["passengers"].map(lambda value: math.isfinite(float(value))).all():
+        raise HTTPException(status_code=422, detail="passengers must be finite numbers")
+    if (incoming["passengers"] < 0).any():
+        raise HTTPException(status_code=422, detail="passengers cannot be negative")
+    keys = ["service_date", "route_id"]
+    if incoming.duplicated(keys).any():
+        raise HTTPException(status_code=422, detail="Batch contains duplicate service_date/route_id records")
+
+    try:
+        current = load_data(str(DATA_PATH)) if DATA_PATH.exists() else pd.DataFrame(columns=["service_date", "route_id", "passengers"])
+        existing_keys = set(zip(current["service_date"], current["route_id"]))
+        incoming_keys = set(zip(incoming["service_date"], incoming["route_id"]))
+        inserted_count = len(incoming_keys - existing_keys)
+        updated_count = len(incoming_keys & existing_keys)
+        merged = pd.concat([current, incoming], ignore_index=True).drop_duplicates(keys, keep="last")
+        merged = merged.sort_values(keys).reset_index(drop=True)
+        merged = complete_daily_series(merged, missing_days=request.missing_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    persist_daily_data(merged)
+    route_count = int(merged["route_id"].nunique())
+    write_metadata("company feed", source_system, len(merged), route_count)
+    record_audit_event("upsert", source_system, len(incoming), route_count)
+    forecast_message = "Counts ingested. Train a model to create the first forecast."
+    if MODEL_PATH.exists():
+        try:
+            horizon = min(90, int(status_payload().get("horizon_days") or 7))
+            forecast = build_forecast(DATA_PATH, MODEL_PATH, horizon, request.missing_days)
+            temporary = FORECAST_PATH.with_suffix(".tmp")
+            forecast.to_csv(temporary, index=False)
+            temporary.replace(FORECAST_PATH)
+            forecast_message = "Counts ingested and the forecast refreshed using the current model."
+        except ValueError as exc:
+            FORECAST_PATH.unlink(missing_ok=True)
+            forecast_message = f"Counts ingested. Retrain the model before forecasting: {exc}"
+    return {
+        "message": forecast_message,
+        "inserted_records": inserted_count,
+        "updated_records": updated_count,
+        "status": status_payload(),
+    }
 
 
 @app.post("/api/data/demo", dependencies=[Depends(authorize), Depends(protect_pipeline)])
@@ -319,7 +448,8 @@ def load_demo_data() -> dict:
     replace_path.replace(DATA_PATH)
     MODEL_PATH.unlink(missing_ok=True)
     FORECAST_PATH.unlink(missing_ok=True)
-    write_metadata("synthetic demo data")
+    write_metadata("synthetic demo data", "bundled_sample", len(data), int(data["route_id"].nunique()))
+    record_audit_event("load_synthetic_demo", "bundled_sample", len(data), int(data["route_id"].nunique()))
     return {"message": "Synthetic demo data loaded. Train it to generate a sample forecast.", "status": status_payload()}
 
 
@@ -338,6 +468,8 @@ def train_model(request: TrainRequest) -> dict:
             predictions_out=PREDICTIONS_PATH,
         )
         save_forecast(request.horizon, request.missing_days)
+        trained_data = load_data(str(DATA_PATH))
+        record_audit_event("train_model", read_metadata().get("source_system", "unknown"), len(trained_data), int(trained_data["route_id"].nunique()))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"message": "Model trained and forecast updated.", "training": api_safe(result), "status": status_payload()}

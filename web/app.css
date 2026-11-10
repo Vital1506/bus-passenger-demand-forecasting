@@ -142,3 +142,44 @@ body{background:radial-gradient(ellipse at 10% 0%,#e7f2ee 0,transparent 34%),var
  .metric-card>small{font-size:9px;line-height:1.4}
  .summary-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+
+/* Planning assumptions and feed example are explicit, compact, and operator supplied. */
+.planning-assumption{margin:15px 0 12px;padding:14px 16px;border:1px solid #d9e7df;border-left:3px solid #d8a94e;border-radius:11px;background:#fbf8ef}
+.planning-assumption strong{color:#31534b;font-size:12px}
+.planning-assumption p{margin:5px 0 0;color:#61746d;font-size:10.5px;line-height:1.55}
+.route-table-tools{display:flex;justify-content:flex-end;margin:0 0 8px}
+.route-table-tools .button{height:33px;font-size:10px}
+.route-plan-input{width:82px;height:34px;padding:0 8px;border:1px solid #cfddd7;border-radius:8px;background:#fff;color:#234b46;text-align:right;font:600 11px var(--mono)}
+.route-plan-input:focus{outline:3px solid #087e8344;outline-offset:1px;border-color:#087e83}
+.planning-signal{display:inline-flex;align-items:center;min-height:26px;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap}
+.signal-muted{background:#f0f4f2;color:#647775}
+.signal-ok{background:#e7f4eb;color:#286746}
+.signal-near{background:#fff4d9;color:#805a13}
+.signal-alert{background:#fbe9e5;color:#934535}
+.page-panel:has(#routeRows) .table-scroll{max-width:100%}
+.page-panel:has(#routeRows) table{min-width:900px}
+.feed-example{margin:12px 0 0;border:1px solid #dce8e5;border-radius:12px;background:#f8fbfa}
+.feed-example summary{padding:13px 15px;color:#285652;font-size:11px;font-weight:700;cursor:pointer}
+.feed-example pre{max-width:100%;margin:0;padding:0 15px 15px;overflow:auto;color:#385b58;font:10px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.connector-note code{padding:2px 5px;border-radius:4px;background:#eaf3ef;color:#1d6258;font:10px var(--mono)}
+@media(max-width:760px){
+ .route-table-tools{justify-content:stretch}
+ .route-table-tools .button{width:100%}
+ .route-plan-input{width:75px}
+ .planning-assumption{padding:12px}
+}
+
+
+.activity-panel{margin-top:16px;padding:17px;border:1px solid #dce8e5;border-radius:13px;background:#fff}
+.activity-panel h3{margin:0;color:#244d49;font-size:13px}
+.activity-panel>div>p{margin:4px 0 0;color:#687d79;font-size:10px;line-height:1.5}
+.activity-panel ol{display:grid;gap:0;padding:0;margin:12px 0 0;list-style:none}
+.activity-panel li{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 0;border-top:1px solid #edf2ef}
+.activity-marker{width:8px;height:8px;flex:none;border-radius:50%;background:#087e83;box-shadow:0 0 0 3px #087e8318}
+.activity-panel li>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.activity-panel li strong{color:#315651;font-size:10.5px}
+.activity-panel li small{color:#71837f;font-size:9.5px}
+.activity-panel li time{margin-left:auto;color:#72827f;font:9px var(--mono);white-space:nowrap}
+.activity-panel .activity-empty{color:#6b7f7a;font-size:10px}
+@media(max-width:480px){.activity-panel li{align-items:flex-start;flex-wrap:wrap}.activity-panel li time{width:calc(100% - 18px);margin-left:18px}.activity-panel{padding:14px}}

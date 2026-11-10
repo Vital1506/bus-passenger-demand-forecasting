@@ -103,15 +103,29 @@
         <section class="page-panel panel" data-pages="routes" id="routesPage">
           <div class="panel-heading"><div><p class="eyebrow">SERVICE PERFORMANCE</p><h2>Route outlook</h2></div><span class="horizon-badge">Forecast totals</span></div>
           <p class="page-lead">Compare expected boardings across routes for the current forecast window. Estimates update when the connected service publishes a new forecast.</p>
-          <div class="summary-cards"><article><small>Routes forecast</small><strong id="routesTotal">—</strong></article><article><small>Window boardings</small><strong id="routesBoardings">—</strong></article><article><small>Average per route / day</small><strong id="routesDailyAverage">—</strong></article></div>
-          <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">WINDOW BOARDINGS</th><th class="numeric">DAILY AVG</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th></tr></thead><tbody id="routeRows"><tr class="empty-row"><td colspan="5">Route summaries will appear with forecasts.</td></tr></tbody></table></div>
+          <div class="summary-cards"><article><small>Routes forecast</small><strong id="routesTotal">—</strong></article><article><small>Window boardings</small><strong id="routesBoardings">—</strong></article><article><small>Average per route / day</small><strong id="routesDailyAverage">—</strong></article><article><small>Routes to review</small><strong id="routesReview">—</strong></article></div>
+          <div class="planning-assumption"><strong>Operator planning assumptions</strong><p>Enter planned trips per day and a target boardings-per-trip threshold for each route. The peak-day average is a review signal, not a vehicle occupancy or peak-load estimate. Values are saved in this browser only.</p></div>
+          <div class="route-table-tools"><button id="resetRoutePlans" class="button button-quiet" type="button">Clear route assumptions</button></div>
+          <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th>PEAK FORECAST DAY</th><th class="numeric">DAILY BOARDINGS</th><th class="numeric">TRIPS / DAY</th><th class="numeric">TARGET / TRIP</th><th class="numeric">EST. / TRIP</th><th>REVIEW SIGNAL</th></tr></thead><tbody id="routeRows"><tr class="empty-row"><td colspan="7">Route summaries will appear with forecasts.</td></tr></tbody></table></div>
         </section>
         <section class="page-panel panel" data-pages="data" id="dataPage">
           <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
           <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
           <div class="summary-cards"><article><small>Source</small><strong id="dataSource">—</strong></article><article><small>Route-day records</small><strong id="dataRows">—</strong></article><article><small>Routes covered</small><strong id="dataRoutes">—</strong></article><article><small>Latest service date</small><strong id="dataLatest">—</strong></article></div>
           <div class="freshness-card"><span class="freshness-icon">↻</span><div><strong id="dataFreshness">Waiting for service</strong><p id="dataGuidance">This page checks the connected service every 60 seconds while open. New daily counts update forecasts after ingestion and model refresh.</p></div></div>
-          <div class="connector-note"><strong>About live data</strong><p>This dashboard can refresh against its API, but it does not currently receive live ticketing or vehicle telemetry. To make forecasts operationally real time, connect an approved ticketing export, AVL/GTFS-Realtime feed, or company data platform and define its update schedule.</p></div>
+          <div class="connector-note"><strong>Scheduled daily-count feed</strong><p>An approved company scheduler can send route-day counts to <code>POST /api/data/ingest</code> with the bearer key. Matching route and service-date rows are safely replaced, and the current model refreshes the forecast. New rows do not retrain the model automatically; schedule training separately.</p></div>
+          <details class="feed-example"><summary>Example integration request</summary><pre>POST /api/data/ingest
+Authorization: Bearer &lt;operator-key&gt;
+Content-Type: application/json
+
+{
+  "source_system": "ticketing_daily_export",
+  "records": [
+    {"service_date": "2026-11-09", "route_id": "R10", "passengers": 1240}
+  ]
+}</pre></details>
+          <section class="activity-panel" aria-labelledby="activityTitle"><div><h3 id="activityTitle">Recent data activity</h3><p>Aggregate updates only; passenger-level rows are not copied into this activity list.</p></div><ol id="activityRows"><li class="activity-empty">No data updates recorded yet.</li></ol></section>
+          <div class="connector-note"><strong>Live telemetry needs a separate adapter</strong><p>This endpoint accepts daily counts. It does not connect to ticketing or AVL/GTFS-Realtime systems by itself. A company-approved integration must map the source feed, define its schedule, and persist data safely.</p></div>
         </section>
         <section class="page-panel panel" data-pages="model" id="modelPage">
           <div class="panel-heading"><div><p class="eyebrow">MODEL QUALITY</p><h2>Model & validation</h2></div><span class="horizon-badge">Time-based evaluation</span></div>

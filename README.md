@@ -26,7 +26,7 @@ The repository now includes a small operator dashboard backed by the existing Py
 - **Android:** the responsive dashboard is an installable Progressive Web App (PWA). Serve the API and dashboard on an approved HTTPS host, open that URL in Chrome on Android, and choose **Install app** or **Add to Home screen**. It is not currently a Play Store APK.
 - **Shared service:** both clients can use the same API address. Open **Settings** in the app to enter the service URL and, on a protected host, the bearer access key. Hosting and a persistent data volume are required for cross-device shared state.
 
-“Real time” here means a forecast is refreshed when new daily counts are uploaded. It is not a live vehicle or ticketing feed. The company data connector, service calendar, SSO/roles, monitoring, and production sign-off still depend on the operator's systems and policies.
+“Real time” currently means the API refreshes a forecast when new daily counts arrive; the browser checks API status every 60 seconds. An authenticated JSON ingestion endpoint supports scheduled daily-count exports, but a provider-specific ticketing/AVL adapter and schedule still need to be configured. This is not live vehicle telemetry.
 
 ### Try the dashboard locally
 
@@ -37,7 +37,26 @@ python -m pip install -r requirements-desktop.txt
 python desktop_launcher.py
 ```
 
-In the dashboard, select **Try the synthetic demo** for a complete walkthrough or upload a CSV with `service_date`, `route_id`, and `passengers`. The demo data is synthetic and its scores are not evidence of company model performance. New uploads are checked for invalid rows and missing route dates. After data arrives, an existing model refreshes the forecast; otherwise choose **Train / retrain model**. The first training run requires at least 90 continuous service dates per route for the default four-fold, seven-day backtest.
+In the dashboard, select **Try the synthetic demo** for a complete walkthrough or upload a CSV with `service_date`, `route_id`, and `passengers`. The demo data is synthetic and its scores are not evidence of company model performance. New uploads are checked for invalid rows and missing route dates. After data arrives, an existing model refreshes the forecast; otherwise choose **Train / retrain model**. The first training run requires at least 90 continuous service dates per route for the default four-fold, seven-day backtest. The Routes page also lets an operator save planned trips per day and a target boardings-per-trip threshold in that browser. Its peak-day average is a review signal only; it does not estimate seat occupancy or passenger loads by time of day.
+
+### Ingest from a scheduled daily export
+
+A company-managed scheduler or adapter can post validated daily counts to the authenticated `POST /api/data/ingest` endpoint:
+
+```json
+{
+  "source_system": "ticketing_daily_export",
+  "missing_days": "error",
+  "records": [
+    {"service_date": "2026-11-09", "route_id": "R10", "passengers": 1240},
+    {"service_date": "2026-11-09", "route_id": "R22", "passengers": 980}
+  ]
+}
+```
+
+Send the payload with `Content-Type: application/json` and `Authorization: Bearer <operator-key>`. Each request accepts up to 5,000 route-day records. A retry safely replaces matching route/date rows; duplicate keys inside one batch are rejected. Missing dates are flagged by default. Use `"missing_days": "zero"` only when the operator confirms those gaps mean zero service or zero demand. Ingestion refreshes forecasts with the existing model; it does not automatically retrain. Schedule retraining and a backtest review separately. The endpoint is an integration contract, not a plug-and-play connection to a vendor feed.
+
+The data page shows source update time and a small aggregate activity log. It stores event counts and source labels, not passenger rows. Local app data and this log are stored under the app data folder. The public Render demo uses temporary storage, so its data and activity history can disappear after a restart. Use persistent, access-controlled, backed-up storage before company operations.
 
 ### Get the Windows app
 
@@ -136,4 +155,4 @@ The unit checks cover fail-closed missing-date handling, explicit zero filling, 
 6. Run in shadow mode and save each forecast, input cutoff, model version, actual outcome, and error. Agree thresholds, fallback behavior, ownership, and retraining cadence with operations.
 7. Add service schedules, holidays, weather forecasts, school calendars, events, and disruptions as versioned, forecast-time-available features. Evaluate capacity planning needs separately from average demand forecasting.
 
-This repository does not include a data connector, production scheduler/API, monitoring service, service-calendar logic, capacity optimizer, or privacy/security review. Those depend on company systems and requirements. No company data was provided; do not treat sample metrics as evidence of real-world performance.
+This repository includes a generic authenticated daily-count ingestion endpoint and a prototype route-planning review signal. It does not include a vendor-specific connector, scheduler, live telemetry adapter, service-calendar logic, monitoring service, capacity optimizer, durable audit archive, SSO/roles, or privacy/security review. Those depend on company systems and requirements. No company data was provided; do not treat sample metrics as evidence of real-world performance.
