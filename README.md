@@ -8,6 +8,10 @@ An operationally oriented Python baseline for **daily passenger boardings per ro
 
 This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
 
+## Interface design
+
+The dashboard uses a calm transit wayfinding palette, clear headings, responsive cards, and visible keyboard focus. The visual system is informed by [Material Design 3](https://m3.material.io/) and [Carbon's accessible data visualization palettes](https://carbondesignsystem.com/data-visualization/color-palettes/). Status labels accompany their colors, and sample data is clearly identified.
+
 ## App clients
 
 The repository now includes a small operator dashboard backed by the existing Python forecasting engine:
