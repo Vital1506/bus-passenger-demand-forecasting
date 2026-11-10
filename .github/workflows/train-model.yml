@@ -2,6 +2,20 @@ name: Train forecasting model
 
 on:
   workflow_dispatch:
+    inputs:
+      dataset:
+        description: Dataset to train and evaluate
+        type: choice
+        required: true
+        default: mta
+        options:
+          - mta
+          - sample
+      route:
+        description: MTA route to use when dataset is mta
+        type: string
+        required: true
+        default: M15
   push:
     branches: [main]
     paths:
@@ -16,7 +30,7 @@ permissions:
 jobs:
   train-and-backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -28,45 +42,107 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install project dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Prepare selected dataset
+        id: dataset
+        shell: bash
+        env:
+          DATASET: ${{ inputs.dataset || 'mta' }}
+          MTA_ROUTE: ${{ inputs.route || 'M15' }}
+        run: |
+          mkdir -p artifacts
+          if [[ "$DATASET" == "mta" ]]; then
+            python -m src.fetch_mta_daily --routes "$MTA_ROUTE" --output artifacts/mta_daily_ridership.csv
+            echo "path=artifacts/mta_daily_ridership.csv" >> "$GITHUB_OUTPUT"
+            echo "label=MTA Bus Hourly Ridership (official 2022–2024 historical dataset; route(s): $MTA_ROUTE)" >> "$GITHUB_OUTPUT"
+            echo "missing_days=zero" >> "$GITHUB_OUTPUT"
+            echo "is_public_mta=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$DATASET" == "sample" ]]; then
+            echo "path=data/sample_daily_ridership.csv" >> "$GITHUB_OUTPUT"
+            echo "label=Synthetic demo sample (not real-world evidence)" >> "$GITHUB_OUTPUT"
+            echo "missing_days=error" >> "$GITHUB_OUTPUT"
+            echo "is_public_mta=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unsupported dataset: $DATASET" >&2
+            exit 2
+          fi
       - name: Train and run rolling-origin backtest
         run: >-
           python -m src.train
-          --data data/sample_daily_ridership.csv
+          --data "${{ steps.dataset.outputs.path }}"
           --model-out artifacts/model.joblib
           --horizon 7
           --folds 4
+          --missing-days "${{ steps.dataset.outputs.missing_days }}"
           --metrics-out artifacts/backtest_metrics.json
           --predictions-out artifacts/backtest_predictions.csv
-      - name: Summarize synthetic demo results
+      - name: Summarize model results and forecast errors
+        shell: bash
+        env:
+          DATASET_LABEL: ${{ steps.dataset.outputs.label }}
+          IS_PUBLIC_MTA: ${{ steps.dataset.outputs.is_public_mta }}
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          m = json.loads(Path("artifacts/backtest_metrics.json").read_text())
-          model = m["model"]
-          baseline = m["seasonal_naive"]
+          import pandas as pd
+
+          metrics = json.loads(Path("artifacts/backtest_metrics.json").read_text())
+          model = metrics["model"]
+          baseline = metrics["seasonal_naive"]
           lines = [
               "## Model training and rolling-origin backtest",
               "",
-              "**Dataset:** synthetic demo data. These results do not represent company or real-world operational performance.",
+              f"**Dataset:** {os.environ['DATASET_LABEL']}",
+          ]
+          if os.environ["IS_PUBLIC_MTA"] == "true":
+              lines += [
+                  "**Source:** [MTA Bus Hourly Ridership: 2020–2024](https://data.ny.gov/Transportation/MTA-Bus-Hourly-Ridership-2020-2024/kv7t-n8in).",
+                  "Hourly estimates were summed across fare/payment categories by route and local service date. Source-absent route dates were explicitly filled as zero boardings for this run; verify that assumption against the service calendar before operational use.",
+              ]
+          else:
+              lines += ["Synthetic sample results are demonstration evidence only and do not represent company or real-world performance."]
+          lines += [
               "",
-              f"- Backtest: {m['backtest_folds']} expanding-window folds × {m['horizon_days']} forecast days",
+              f"- Backtest: {metrics['backtest_folds']} expanding-window folds × {metrics['horizon_days']} forecast days",
               f"- Model WAPE: {model['wape']:.2%} | MAE: {model['mae']:.2f} | RMSE: {model['rmse']:.2f}",
               f"- Seasonal-naive WAPE: {baseline['wape']:.2%} | MAE: {baseline['mae']:.2f} | RMSE: {baseline['rmse']:.2f}",
               "",
-              "Route-level metrics and out-of-fold predictions are included in the downloadable artifact.",
+              "### Route-level error summary",
+              "",
+              "| Route | Model WAPE | Baseline WAPE |",
+              "|---|---:|---:|",
           ]
-          with open(Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]), "a") as f:
-              f.write("\n".join(lines) + "\n")
+          for route, scores in metrics.get("by_route", {}).items():
+              lines.append(f"| {route} | {scores['model']['wape']:.2%} | {scores['seasonal_naive']['wape']:.2%} |")
+
+          predictions = pd.read_csv("artifacts/backtest_predictions.csv")
+          predictions["absolute_error"] = (predictions["passengers"] - predictions["predicted_passengers"]).abs()
+          worst = predictions.nlargest(5, "absolute_error")
+          lines += [
+              "",
+              "### Largest out-of-fold misses",
+              "",
+              "| Date | Route | Actual | Forecast | Absolute error |",
+              "|---|---|---:|---:|---:|",
+          ]
+          for row in worst.itertuples(index=False):
+              lines.append(
+                  f"| {row.service_date} | {row.route_id} | {row.passengers:.0f} | "
+                  f"{row.predicted_passengers:.1f} | {row.absolute_error:.1f} |"
+              )
+          lines += [
+              "",
+              "The downloadable artifact includes the fitted model, source data/metadata when applicable, route-level metrics, and fold-level predictions.",
+          ]
+          with open(Path(os.environ["GITHUB_STEP_SUMMARY"]), "a") as summary:
+              summary.write("\n".join(lines) + "\n")
           PY
-      - name: Upload trained model and evaluation artifacts
+      - name: Upload trained model, data, and evaluation artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bus-demand-model-and-backtest
-          path: |
-            artifacts/model.joblib
-            artifacts/backtest_metrics.json
-            artifacts/backtest_predictions.csv
+          path: artifacts/
           if-no-files-found: error
           retention-days: 30
