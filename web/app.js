@@ -46,7 +46,7 @@ function toast(message, error = false) {
 function setBusy(busy, label = "Working…") {
   state.busy = busy;
   [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
-  $("#trainButton").innerHTML = busy ? `${label} <span>···</span>` : "Train / retrain model <span>→</span>";
+  $("#trainButton").innerHTML = busy ? `${label} <span>···</span>` : "Train my forecast <span>→</span>";
 }
 function prettyDate(value) {
   if (!value) return "—";
@@ -469,3 +469,4 @@ function setup() {
   window.setInterval(() => { if (document.visibilityState === "visible") refreshStatus(); }, 60000);
 }
 document.addEventListener("DOMContentLoaded", setup);
+
