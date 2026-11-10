@@ -1,0 +1,23 @@
+# Separate blueprint for a controlled company pilot.
+# Create this from Render using this file as the Blueprint path.
+# This paid service is separate from render.yaml (the public free demo).
+services:
+  - type: web
+    name: bus-demand-company-pilot
+    runtime: docker
+    plan: 1c-2g
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    branch: main
+    autoDeployTrigger: commit
+    envVars:
+      - key: BUS_FORECAST_REQUIRE_AUTH
+        value: "true"
+      - key: BUS_FORECAST_API_KEY
+        generateValue: true
+      - key: BUS_FORECAST_DATA_DIR
+        value: /var/lib/bus-forecast
+    disk:
+      name: bus-demand-company-data
+      mountPath: /var/lib/bus-forecast
+      sizeGB: 10
