@@ -17,6 +17,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Node.js for route catalogue tests
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -33,5 +38,9 @@ jobs:
       - name: Check for critical lint errors
         run: python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
+      - name: Test route suggestions and identity
+        run: node --test tests/route_catalog.test.mjs
+
       - name: Run tests
         run: python -m pytest -q
+

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#101a2c" />
+    <meta name="theme-color" content="#28163e" />
     <meta name="description" content="Daily route level bus passenger demand forecasts and operating signals." />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
@@ -115,13 +115,16 @@
             <div id="operatorControls">
               <p class="guide-intro">Enter the number of passengers who boarded on a route for one day. Add counts as you collect them; you do not need to prepare a file.</p>
               <form id="quickCountForm" class="quick-count-form">
-                <label>Starting point<input id="countOrigin" name="origin" required maxlength="48" autocomplete="address-level2" placeholder="e.g. Central Station" /></label>
-                <label>Destination<input id="countDestination" name="destination" required maxlength="48" placeholder="e.g. North Market" /></label>
+                <label>Starting point<input id="countOrigin" name="origin" list="originSuggestions" required maxlength="60" autocomplete="off" placeholder="Type or choose a starting city" /></label>
+                <datalist id="originSuggestions"></datalist>
+                <label>Destination<input id="countDestination" name="destination" list="destinationSuggestions" required maxlength="60" autocomplete="off" placeholder="Choose a destination for this start" /></label>
+                <datalist id="destinationSuggestions"></datalist>
                 <label>Service date<input id="countDate" name="service_date" type="date" required /></label>
                 <label>Total boardings that day<input id="countPassengers" name="passengers" type="number" min="0" max="1000000" step="1" required placeholder="e.g. 240" /></label>
                 <button id="saveCountButton" class="button button-primary" type="submit">Save this daily count <span>→</span></button>
               </form>
-              <p class="count-hint">Only enter a count you observed or can verify. Use the same place names for this route each day. If you do not have counts yet, try the clearly labelled synthetic example below.</p>
+              <p id="routeCatalogHint" class="route-catalog-hint" role="status" aria-live="polite">Loading route suggestions…</p>
+              <p class="count-hint">The route catalogue is based on the supplied Pan-India bus routes file. Suggestions are reference city pairs only; they do not verify stops or current service. You can enter a custom route. Only save passenger counts you observed or can verify.</p>
               <div class="flow-controls missing-policy"><label for="missingDays">If a date has no count</label><select id="missingDays"><option value="error">Stop and ask me (recommended)</option><option value="zero">Use zero only if there was no service</option></select></div>
               <details class="advanced-data"><summary>Have a file instead? Import daily counts</summary>
                 <label id="dropzone" class="dropzone" for="csvFile"><span class="upload-mark">↑</span><span><strong>Choose a CSV file</strong><small>Columns: date, route, passengers · up to 20 MB</small></span><input id="csvFile" type="file" accept=".csv,text/csv" /></label>
@@ -193,7 +196,7 @@ Content-Type: application/json
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <dialog id="settingsDialog" class="settings-dialog"><form method="dialog"><div class="dialog-head"><div><p class="eyebrow">SECURE CONNECTION</p><h2>API access</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div><p>Connect this app to your local service or the shared service address from your administrator. The address and access key are stored on this device only.</p><label for="apiUrl">API service address</label><input id="apiUrl" type="url" autocomplete="url" placeholder="Uses the service hosting this page" /><label for="apiKey" class="key-label">Bearer access key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Paste key supplied by your administrator" /><div class="dialog-actions"><button id="clearKey" class="button button-quiet" type="button">Reset connection</button><button id="saveKey" class="button button-primary" value="default">Save connection <span>→</span></button></div></form></dialog>
-    <script src="/static/app.js" defer></script>
+    <script type="module" src="/static/app.js"></script>
   </body>
 </html>
 

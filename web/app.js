@@ -1,5 +1,7 @@
+import { canonicalRoute, matchDestinations, normalizePlaceLabel } from "./route_catalog.mjs";
+
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null };
+const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
@@ -155,6 +157,61 @@ const PAGE_INFO = {
   model: ["How it works", "A plain-language guide to the data and forecast."]
 };
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
+function fillDatalist(list, values) {
+  if (!list) return;
+  list.replaceChildren(...values.map((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    return option;
+  }));
+}
+function suggestedValues(values, query, limit = 50) {
+  const normalizedQuery = normalizePlaceLabel(query).toLocaleLowerCase("en-IN");
+  if (!normalizedQuery) return values.slice(0, limit);
+  const startsWith = [], contains = [];
+  for (const value of values) {
+    const normalizedValue = normalizePlaceLabel(value).toLocaleLowerCase("en-IN");
+    if (normalizedValue.startsWith(normalizedQuery)) startsWith.push(value);
+    else if (normalizedValue.includes(normalizedQuery)) contains.push(value);
+  }
+  return [...startsWith, ...contains].slice(0, limit);
+}
+function updateRouteSuggestions() {
+  const originInput = $("#countOrigin"), destinationInput = $("#countDestination");
+  const originList = $("#originSuggestions"), destinationList = $("#destinationSuggestions");
+  const hint = $("#routeCatalogHint");
+  if (!originInput || !destinationInput || !originList || !destinationList || !hint) return;
+  const catalogOrigins = Object.keys(state.routeCatalog?.origins || {}).sort((a, b) => a.localeCompare(b, "en-IN"));
+  fillDatalist(originList, suggestedValues(catalogOrigins, originInput.value));
+  const origin = normalizePlaceLabel(originInput.value);
+  const destinations = matchDestinations(origin, state.routeCatalog);
+  fillDatalist(destinationList, suggestedValues(destinations, destinationInput.value, 80));
+  if (!state.routeCatalog) {
+    hint.textContent = "Route suggestions are unavailable right now. You can still type your own route labels; they are not checked against a map.";
+  } else if (!origin) {
+    hint.textContent = `Choose a starting city to see matching destinations from the supplied route catalogue (${catalogOrigins.length.toLocaleString()} starting cities).`;
+  } else if (!destinations.length) {
+    hint.textContent = `No catalogue routes start at “${origin}”. You can still enter a custom place label; it will not be map-verified.`;
+  } else {
+    const exactDestination = destinations.some((value) => normalizePlaceLabel(value).toLocaleLowerCase("en-IN") === normalizePlaceLabel(destinationInput.value).toLocaleLowerCase("en-IN"));
+    hint.textContent = exactDestination
+      ? `Listed route: ${canonicalRoute(origin, destinationInput.value, state.routeCatalog).routeId}. Catalogue entries are suggestions, not live service confirmation.`
+      : `${destinations.length.toLocaleString()} listed destinations from ${origin}. Start typing to narrow the list, or enter a custom destination.`;
+  }
+}
+async function loadRouteCatalog() {
+  try {
+    const response = await fetch("/static/route_catalog.json", { cache: "force-cache" });
+    if (!response.ok) throw new Error(`Route catalogue request failed (${response.status})`);
+    const catalog = await response.json();
+    if (!catalog?.origins || typeof catalog.origins !== "object") throw new Error("Route catalogue has an invalid format");
+    state.routeCatalog = catalog;
+  } catch (error) {
+    console.warn("Route suggestions could not be loaded", error);
+    state.routeCatalog = null;
+  }
+  updateRouteSuggestions();
+}
 function dismissSplash() {
   if (!state.opening) return;
   state.opening = false;
@@ -167,7 +224,7 @@ function dismissSplash() {
   const heading = $("#pageTitle");
   if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus({ preventScroll: true }); }
 }
-async function finishSplash(connected) {
+async function finishSplash(connected, failureMessage = "") {
   if (!state.opening) return;
   clearTimeout(state.openingMessageTimer);
   const remaining = Math.max(0, 700 - (Date.now() - state.openingStartedAt));
@@ -184,7 +241,7 @@ async function finishSplash(connected) {
     $("#openDashboard").focus({ preventScroll: true });
     state.openingTimer = setTimeout(dismissSplash, 1600);
   } else {
-    setSplashStatus("The forecast service could not be reached. Check your connection and try again.");
+    setSplashStatus(failureMessage || "The forecast service could not be reached. Check your connection and try again.");
     $("#retryOpening").classList.remove("hidden");
     $("#offlineOpening").classList.remove("hidden");
     $("#retryOpening").focus({ preventScroll: true });
@@ -348,7 +405,10 @@ function setPublicDemoMode(enabled, allowOperatorEdits = false) {
   $("#downloadForecast").href = enabled ? "/api/public-demo/forecast.csv" : "/api/forecast.csv";
 }
 async function refreshStatus() {
+  if (state.checking) return false;
+  state.checking = true;
   let connected = false;
+  let connectionError = "";
   try {
     if (state.opening) {
       setSplashStatus("Checking the forecast service…");
@@ -384,8 +444,17 @@ async function refreshStatus() {
   } catch (error) {
     setConnection(false);
     if (error.message.includes("access key")) toast(error.message, true);
+    if (state.opening) {
+      const savedAddress = localStorage.getItem("busForecastApiUrl");
+      connectionError = savedAddress
+        ? `Could not reach the saved API address (${savedAddress}). Check API access settings, then retry.`
+        : "Could not reach this website’s forecast service. It may be waking up; retry, check your connection, or continue offline.";
+    }
   } finally {
-    if (state.opening) await finishSplash(connected);
+    state.checking = false;
+    const retryButton = $("#retryOpening");
+    if (retryButton) { retryButton.disabled = false; retryButton.innerHTML = "Retry connection <span>↻</span>"; }
+    if (state.opening) await finishSplash(connected, connectionError);
   }
   return connected;
 }
@@ -414,6 +483,7 @@ function setup() {
   $("#openDashboard").addEventListener("click", dismissSplash);
   $("#offlineOpening").addEventListener("click", dismissSplash);
   $("#retryOpening").addEventListener("click", () => {
+    if (state.checking) return;
     state.opening = true;
     state.openingStartedAt = Date.now();
     $("#appSplash").classList.remove("is-error", "is-ready");
@@ -421,6 +491,8 @@ function setup() {
     clearTimeout(state.openingMessageTimer);
     $("#retryOpening").classList.add("hidden");
     $("#offlineOpening").classList.add("hidden");
+    $("#retryOpening").disabled = true;
+    $("#retryOpening").innerHTML = "Checking… <span>↻</span>";
     setSplashStatus("Checking the forecast service…");
     refreshStatus();
   });
@@ -448,6 +520,12 @@ function setup() {
   });
   $("#trainButton").addEventListener("click", () => withBusy("Training…", () => train()));
   const countDate = $("#countDate");
+  const originInput = $("#countOrigin"), destinationInput = $("#countDestination");
+  if (originInput && destinationInput) {
+    originInput.addEventListener("input", updateRouteSuggestions);
+    destinationInput.addEventListener("input", updateRouteSuggestions);
+    void loadRouteCatalog();
+  }
   if (countDate) {
     const now = new Date();
     const localToday = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -456,7 +534,9 @@ function setup() {
   }
   $("#quickCountForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    const origin = $("#countOrigin").value.trim().replace(/\s+/g, " "), destination = $("#countDestination").value.trim().replace(/\s+/g, " ");
+    const rawOrigin = originInput.value, rawDestination = destinationInput.value;
+    const route = canonicalRoute(rawOrigin, rawDestination, state.routeCatalog);
+    const { origin, destination, routeId } = route;
     const serviceDate = countDate.value, passengers = Number($("#countPassengers").value);
     if (!origin || !destination || origin.toLocaleLowerCase() === destination.toLocaleLowerCase()) {
       toast("Enter two different places for this route", true);
@@ -466,13 +546,17 @@ function setup() {
       toast("Check the service date and enter a whole passenger count of zero or more", true);
       return;
     }
-    const routeId = `${origin} → ${destination}`;
     withBusy("Saving count…", async () => {
       const result = await api("/api/data/ingest", {
         method: "POST",
         body: JSON.stringify({ source_system: "manual_daily_entry", missing_days: $("#missingDays").value, records: [{ service_date: serviceDate, route_id: routeId, passengers }] })
       });
+      const action = Number(result.inserted_records) === 1 ? "new count saved" : Number(result.updated_records) === 1 ? "existing date updated" : "count saved";
+      result.message = `${action}: ${passengers.toLocaleString()} boardings for ${routeId} on ${serviceDate}. ${result.message || ""}`.trim();
+      originInput.value = origin;
+      destinationInput.value = destination;
       $("#countPassengers").value = "";
+      updateRouteSuggestions();
       return result;
     });
   });
