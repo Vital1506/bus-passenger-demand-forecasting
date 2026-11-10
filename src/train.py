@@ -152,7 +152,7 @@ def train_project(
     missing_days: str = "error",
     metrics_out: str | Path = "artifacts/backtest_metrics.json",
     predictions_out: str | Path = "artifacts/backtest_predictions.csv",
-    holdout_days: int = 28,
+    holdout_days: int | None = None,
     holdout_predictions_out: str | Path = "artifacts/holdout_predictions.csv",
 ) -> dict:
     """Train, backtest, save the model bundle, and return API-safe run details."""
@@ -162,6 +162,10 @@ def train_project(
         raise ValueError("horizon cannot exceed 90 days")
     raw = load_data(str(data_path))
     data = complete_daily_series(raw, missing_days=missing_days)
+    if holdout_days is None:
+        # Keep a roughly four-week holdout while making it a whole number of
+        # forecast blocks for every API-supported horizon.
+        holdout_days = max(horizon, ((28 + horizon - 1) // horizon) * horizon)
     if holdout_days < horizon or holdout_days % horizon:
         raise ValueError("holdout-days must be a positive multiple of horizon and at least one full horizon")
     selection_data = data[data["service_date"] < data["service_date"].max() - pd.Timedelta(days=holdout_days - 1)].copy()
@@ -281,7 +285,7 @@ def main() -> None:
     parser.add_argument("--missing-days", choices=["error", "zero"], default="error")
     parser.add_argument("--metrics-out", default="artifacts/backtest_metrics.json")
     parser.add_argument("--predictions-out", default="artifacts/backtest_predictions.csv")
-    parser.add_argument("--holdout-days", type=int, default=28)
+    parser.add_argument("--holdout-days", type=int, default=None, help="Final holdout length; defaults to at least 28 days rounded up to full forecast horizons")
     parser.add_argument("--holdout-predictions-out", default="artifacts/holdout_predictions.csv")
     args = parser.parse_args()
     try:
