@@ -8,6 +8,12 @@ An operationally oriented Python baseline for **daily passenger boardings per ro
 
 This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
 
+## Operator workspace
+
+The web app now opens with a brief branded splash and has dedicated **Overview**, **Forecasts**, **Routes**, **Data**, and **Model** pages. Route summaries aggregate the forecast window by route, the model page compares WAPE with the seasonal-naive baseline, and the data page shows source coverage and forecast freshness.
+
+The dashboard checks its API every 60 seconds while the page is open. Forecasts update after new records are ingested and the model/forecast is refreshed. A live ticketing or vehicle telemetry feed is **not connected by default**; configure an approved data integration and update schedule before treating the app as real-time operations software.
+
 ## Interface design
 
 The dashboard uses a calm transit wayfinding palette, clear headings, responsive cards, and visible keyboard focus. The visual system is informed by [Material Design 3](https://m3.material.io/) and [Carbon's accessible data visualization palettes](https://carbondesignsystem.com/data-visualization/color-palettes/). Status labels accompany their colors, and sample data is clearly identified.
