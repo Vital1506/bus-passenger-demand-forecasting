@@ -11,6 +11,7 @@
     <title>Bus Demand Forecast</title>
   </head>
   <body>
+    <div id="appSplash" class="app-splash" role="status" aria-live="polite"><div class="splash-mark"><img src="/static/icon.svg" alt="" /></div><strong>BUS DEMAND</strong><span>Preparing your route outlook</span><div class="splash-progress"><i></i></div></div>
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Bus Demand Forecast home">
@@ -23,9 +24,18 @@
           <button id="settingsButton" class="icon-button" type="button" aria-label="API access settings" title="API access settings">⚙</button>
         </div>
       </header>
+      <nav class="primary-nav" id="mainNav" aria-label="Main navigation">
+        <button type="button" data-view="overview" aria-current="page"><span>⌂</span> Overview</button>
+        <button type="button" data-view="forecasts"><span>⌁</span> Forecasts</button>
+        <button type="button" data-view="routes"><span>↗</span> Routes</button>
+        <button type="button" data-view="data"><span>▤</span> Data</button>
+        <button type="button" data-view="model"><span>◉</span> Model</button>
+        <span class="nav-status"><i></i> Checks every minute</span>
+      </nav>
+      <div class="page-intro"><div><p class="eyebrow">OPERATIONS WORKSPACE</p><h2 id="pageTitle">Overview</h2></div><p id="pageSummary">A quick read on service demand and forecast freshness.</p></div>
 
       <main>
-        <section class="hero">
+        <section class="hero" data-pages="overview">
           <div class="hero-copy">
             <p class="eyebrow"><span class="pulse"></span> THE WEEK AHEAD, BY ROUTE</p>
             <h1>Know how busy<br /><em>your routes may be.</em></h1>
@@ -41,15 +51,15 @@
           </div>
         </section>
 
-        <section class="metrics-grid" aria-label="Forecast overview">
+        <section class="metrics-grid" aria-label="Forecast overview" data-pages="overview">
           <article class="metric-card"><div class="metric-top"><span>ROUTES IN SCOPE</span><span class="metric-symbol">↗</span></div><strong id="routeCount">—</strong><small id="rowCount">Upload route counts to begin</small></article>
           <article class="metric-card"><div class="metric-top"><span>LAST SERVICE DATE</span><span class="metric-symbol">◷</span></div><strong id="latestDate">—</strong><small>Latest daily observation received</small></article>
           <article class="metric-card"><div class="metric-top"><span title="Weighted absolute percentage error; lower is better">BACKTEST ERROR (WAPE)</span><span class="metric-symbol">⌁</span></div><strong id="modelWape">—</strong><small id="modelCompare">Rolling time based validation</small></article>
           <article class="metric-card metric-highlight"><div class="metric-top"><span>FORECAST WINDOW</span><span class="metric-symbol">▤</span></div><strong id="horizonLabel">—</strong><small id="modelState">No model trained</small></article>
         </section>
 
-        <section class="workspace-grid">
-          <section id="forecast-panel" class="panel forecast-panel">
+        <section class="workspace-grid" data-pages="overview forecasts data">
+          <section id="forecast-panel" class="panel forecast-panel" data-pages="overview forecasts">
             <div class="panel-heading">
               <div><p class="eyebrow">DEMAND OUTLOOK</p><h2>Next service days</h2></div>
               <div class="panel-tools"><span id="publicForecastBadge" class="horizon-badge hidden">Next 7 days</span><div id="operatorForecastTools" class="operator-forecast-tools"><label class="sr-only" for="forecastDays">Forecast horizon</label><select id="forecastDays" aria-label="Forecast horizon"><option value="7">Next 7 days</option><option value="3">Next 3 days</option><option value="14">Next 14 days</option><option value="28">Next 28 days</option></select><button id="refreshForecast" class="button button-quiet" type="button">Refresh forecast</button></div></div>
@@ -58,7 +68,7 @@
             <div class="chart-legend"><span><i class="legend-line"></i>Forecast total</span><span><i class="legend-band"></i>Approximate historical error range</span><span id="chartRange" class="chart-range">—</span></div>
           </section>
 
-          <section id="workflowPanel" class="panel workflow-panel">
+          <section id="workflowPanel" class="panel workflow-panel" data-pages="overview data">
             <div class="panel-heading"><div><p class="eyebrow">YOUR NEXT STEPS</p><h2>How to use this forecast</h2></div><span class="step-count">01—03</span></div>
             <div id="operatorControls">
               <div class="flow-step"><span class="step-number">01</span><div><strong>Upload daily passenger counts</strong><p>Choose a CSV with <code>service_date</code>, <code>route_id</code>, and <code>passengers</code>.</p></div></div>
@@ -81,18 +91,37 @@
             </div>
             <p id="workflowNote" class="workflow-note">Forecasts are planning estimates. Validate them against your operating data.</p>
           </section>
-          </section>
         </section>
 
-        <section class="panel table-panel">
+        <section class="panel table-panel" data-pages="forecasts">
           <div class="panel-heading"><div><p class="eyebrow">ROUTE LEVEL DETAIL</p><h2>Forecast by service date</h2></div><a id="downloadForecast" class="button button-quiet disabled-link" href="/api/forecast.csv" download>Download CSV <span>↓</span></a></div>
           <div class="table-scroll"><table><thead><tr><th>SERVICE DATE</th><th>ROUTE</th><th class="numeric">PREDICTED BOARDINGS</th><th class="numeric">APPROXIMATE RANGE</th></tr></thead><tbody id="forecastRows"><tr class="empty-row"><td colspan="4">Forecast rows will appear after model training.</td></tr></tbody></table></div>
           <p class="table-footnote">Approximate range based on historical backtest errors. It is not a guarantee.</p>
         </section>
 
-        <section class="bottom-strip"><span><i class="live-dot"></i> Forecast refreshes when new counts arrive</span><span>Planning support · review estimates before acting</span><span>Demo v0.1</span></section>
+        <section class="page-panel panel" data-pages="routes" id="routesPage">
+          <div class="panel-heading"><div><p class="eyebrow">SERVICE PERFORMANCE</p><h2>Route outlook</h2></div><span class="horizon-badge">Forecast totals</span></div>
+          <p class="page-lead">Compare expected boardings across routes for the current forecast window. Estimates update when the connected service publishes a new forecast.</p>
+          <div class="summary-cards"><article><small>Routes forecast</small><strong id="routesTotal">—</strong></article><article><small>Window boardings</small><strong id="routesBoardings">—</strong></article><article><small>Average per route / day</small><strong id="routesDailyAverage">—</strong></article></div>
+          <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">WINDOW BOARDINGS</th><th class="numeric">DAILY AVG</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th></tr></thead><tbody id="routeRows"><tr class="empty-row"><td colspan="5">Route summaries will appear with forecasts.</td></tr></tbody></table></div>
+        </section>
+        <section class="page-panel panel" data-pages="data" id="dataPage">
+          <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
+          <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
+          <div class="summary-cards"><article><small>Source</small><strong id="dataSource">—</strong></article><article><small>Route-day records</small><strong id="dataRows">—</strong></article><article><small>Routes covered</small><strong id="dataRoutes">—</strong></article><article><small>Latest service date</small><strong id="dataLatest">—</strong></article></div>
+          <div class="freshness-card"><span class="freshness-icon">↻</span><div><strong id="dataFreshness">Waiting for service</strong><p id="dataGuidance">This page checks the connected service every 60 seconds while open. New daily counts update forecasts after ingestion and model refresh.</p></div></div>
+          <div class="connector-note"><strong>About live data</strong><p>This dashboard can refresh against its API, but it does not currently receive live ticketing or vehicle telemetry. To make forecasts operationally real time, connect an approved ticketing export, AVL/GTFS-Realtime feed, or company data platform and define its update schedule.</p></div>
+        </section>
+        <section class="page-panel panel" data-pages="model" id="modelPage">
+          <div class="panel-heading"><div><p class="eyebrow">MODEL QUALITY</p><h2>Model & validation</h2></div><span class="horizon-badge">Time-based evaluation</span></div>
+          <p class="page-lead">Model quality is compared with a same-weekday seasonal-naive baseline using historical validation. Lower WAPE is better; it does not guarantee future accuracy.</p>
+          <div class="summary-cards"><article><small>Model WAPE</small><strong id="modelPageWape">—</strong></article><article><small>Seasonal baseline</small><strong id="modelPageBaseline">—</strong></article><article><small>Current result</small><strong id="modelWinner">—</strong></article><article><small>Trained through</small><strong id="modelTrainedThrough">—</strong></article></div>
+          <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
+          <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>
+        </section>
+        <section class="bottom-strip" data-pages="overview forecasts routes data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
       </main>
-      <footer><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
+      <footer data-pages="overview forecasts routes data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
