@@ -29,6 +29,8 @@ In the dashboard, select **Try the synthetic demo** for a complete walkthrough o
 
 The **Build Windows desktop app** GitHub Actions workflow packages a Windows build after relevant changes land on `main`. Open the repository's Actions tab, select the latest successful **Build Windows desktop app** run, and download its `BusDemandForecast-Windows` artifact. Extract the ZIP and run `BusDemandForecast.exe` from the included folder. The workflow artifact expires after 30 days; rebuild or retain it according to your release process.
 
+**First launch on Windows:** This downloadable build is not code-signed, so SmartScreen may say “Windows protected your PC” because it cannot verify the publisher. Only use the ZIP downloaded from this repository’s [Windows build workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/build-app.yml). In the ZIP’s **Properties**, select **Unblock** if Windows shows that option, apply it, and then extract the folder. If SmartScreen still appears, choose **More info** → **Run anyway** only after verifying the source and workflow. Managed company devices may block unsigned apps by policy. Removing the warning for all users requires an organization-owned, trusted Authenticode signing certificate; do not disable Defender or other security settings.
+
 ### Host for Android and shared use
 
 The repository includes a Docker image for an approved Linux host. It requires a bearer key and should be served behind HTTPS. Mount persistent storage at `/var/lib/bus-forecast`; otherwise uploads and model files can be lost when the container is replaced.
