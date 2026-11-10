@@ -1,5 +1,9 @@
 # Bus Passenger Demand Forecasting
 
+**[Open the live website](https://bus-demand-forecast-4jmb.onrender.com/)** · [API health](https://bus-demand-forecast-4jmb.onrender.com/api/health)
+
+The live site opens in a **public, read-only synthetic demo**. It does not require a key and cannot accept uploads or train models. Operator features require an authorized bearer key in Settings. Render's free service can sleep while idle, so allow a short cold start on first visit. Demo records and forecasts are synthetic and are not evidence of real-world accuracy.
+
 An operationally oriented Python baseline for **daily passenger boardings per route**. The workflow validates input coverage, uses time-based rolling-origin backtests, compares a machine-learning model with a seasonal-naive baseline, saves evaluation artifacts, and produces recursive forecasts with approximate historical error bands.
 
 This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
@@ -39,7 +43,7 @@ The repository includes a Docker image for an approved Linux host. It requires a
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2FVital1506%2Fbus-passenger-demand-forecasting)
 
-The included `render.yaml` configures the API and dashboard as one HTTPS website and generates a bearer key during deployment. After the service is live, copy `BUS_FORECAST_API_KEY` from its Render environment settings, open the site’s **Settings**, and save that key to connect the dashboard. Use **Try the synthetic demo** to verify the forecasting workflow.
+The included `render.yaml` configures the API and dashboard as one HTTPS website and generates a bearer key during deployment. Open the [live website](https://bus-demand-forecast-4jmb.onrender.com/) to see the public read-only synthetic preview. The public preview cannot upload company data or trigger model training. To use operator features, copy `BUS_FORECAST_API_KEY` from the Render environment settings and save it in **Settings**.
 
 This free setup is for demonstration only: it can sleep when idle and its filesystem is temporary, so uploaded data and trained models can be lost after a restart or redeploy. Do not upload company data to this demo. For operational use, choose an approved paid host with persistent storage, HTTPS, access controls, backups, and company approval before importing data.
 
