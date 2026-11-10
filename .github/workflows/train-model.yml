@@ -65,17 +65,19 @@ jobs:
             echo "Unsupported dataset: $DATASET" >&2
             exit 2
           fi
-      - name: Train and run rolling-origin backtest
+      - name: Train, backtest, and score final holdout
         run: >-
           python -m src.train
           --data "${{ steps.dataset.outputs.path }}"
           --model-out artifacts/model.joblib
           --horizon 7
           --folds 4
+          --holdout-days 28
           --missing-days "${{ steps.dataset.outputs.missing_days }}"
           --metrics-out artifacts/backtest_metrics.json
           --predictions-out artifacts/backtest_predictions.csv
-      - name: Summarize model results and forecast errors
+          --holdout-predictions-out artifacts/holdout_predictions.csv
+      - name: Summarize validation and forecast errors
         shell: bash
         env:
           DATASET_LABEL: ${{ steps.dataset.outputs.label }}
@@ -88,11 +90,12 @@ jobs:
 
           import pandas as pd
 
-          metrics = json.loads(Path("artifacts/backtest_metrics.json").read_text())
-          model = metrics["model"]
-          baseline = metrics["seasonal_naive"]
+          report = json.loads(Path("artifacts/backtest_metrics.json").read_text())
+          model = report["model"]
+          baseline = report["seasonal_naive"]
+          holdout = report["final_holdout"]
           lines = [
-              "## Model training and rolling-origin backtest",
+              "## Model training and time-based evaluation",
               "",
               f"**Dataset:** {os.environ['DATASET_LABEL']}",
           ]
@@ -105,36 +108,53 @@ jobs:
               lines += ["Synthetic sample results are demonstration evidence only and do not represent company or real-world performance."]
           lines += [
               "",
-              f"- Backtest: {metrics['backtest_folds']} expanding-window folds × {metrics['horizon_days']} forecast days",
-              f"- Model WAPE: {model['wape']:.2%} | MAE: {model['mae']:.2f} | RMSE: {model['rmse']:.2f}",
-              f"- Seasonal-naive WAPE: {baseline['wape']:.2%} | MAE: {baseline['mae']:.2f} | RMSE: {baseline['rmse']:.2f}",
+              f"- Model-selection CV: {report['backtest_folds']} expanding-window folds × {report['horizon_days']} days",
+              f"- CV model WAPE: {model['wape']:.2%} | MAE: {model['mae']:.2f} | RMSE: {model['rmse']:.2f}",
+              f"- CV seasonal-naive WAPE: {baseline['wape']:.2%} | MAE: {baseline['mae']:.2f} | RMSE: {baseline['rmse']:.2f}",
               "",
-              "### Route-level error summary",
+              f"### Final walk-forward holdout ({holdout['start']} to {holdout['end']})",
               "",
-              "| Route | Model WAPE | Baseline WAPE |",
+              f"Four sequential 7-day forecast blocks; actuals are revealed only after each block.",
+              f"- Model WAPE: {holdout['model']['wape']:.2%} | MAE: {holdout['model']['mae']:.2f} | RMSE: {holdout['model']['rmse']:.2f}",
+              f"- Seasonal-naive WAPE: {holdout['seasonal_naive']['wape']:.2%} | MAE: {holdout['seasonal_naive']['mae']:.2f} | RMSE: {holdout['seasonal_naive']['rmse']:.2f}",
+              "",
+              "### Holdout WAPE by route",
+              "",
+              "| Route | Model | Seasonal naive |",
               "|---|---:|---:|",
           ]
-          for route, scores in metrics.get("by_route", {}).items():
+          for route, scores in holdout.get("by_route", {}).items():
               lines.append(f"| {route} | {scores['model']['wape']:.2%} | {scores['seasonal_naive']['wape']:.2%} |")
 
-          predictions = pd.read_csv("artifacts/backtest_predictions.csv")
+          lead = holdout["error_analysis"]["by_lead_day"]
+          lines += [
+              "",
+              "### Holdout WAPE by forecast lead day",
+              "",
+              "| Lead day | Model WAPE |",
+              "|---:|---:|",
+          ]
+          for day, scores in sorted(lead.items(), key=lambda item: int(item[0])):
+              lines.append(f"| {day} | {scores['wape']:.2%} |")
+
+          predictions = pd.read_csv("artifacts/holdout_predictions.csv")
           predictions["absolute_error"] = (predictions["passengers"] - predictions["predicted_passengers"]).abs()
           worst = predictions.nlargest(5, "absolute_error")
           lines += [
               "",
-              "### Largest out-of-fold misses",
+              "### Largest holdout misses",
               "",
-              "| Date | Route | Actual | Forecast | Absolute error |",
-              "|---|---|---:|---:|---:|",
+              "| Date | Route | Actual | Forecast | Absolute error | Lead day |",
+              "|---|---|---:|---:|---:|---:|",
           ]
           for row in worst.itertuples(index=False):
               lines.append(
                   f"| {row.service_date} | {row.route_id} | {row.passengers:.0f} | "
-                  f"{row.predicted_passengers:.1f} | {row.absolute_error:.1f} |"
+                  f"{row.predicted_passengers:.1f} | {row.absolute_error:.1f} | {row.lead_day} |"
               )
           lines += [
               "",
-              "The downloadable artifact includes the fitted model, source data/metadata when applicable, route-level metrics, and fold-level predictions.",
+              "The downloadable artifact includes the fitted full-history model, data/source metadata, model-selection predictions, final holdout predictions, and error analysis.",
           ]
           with open(Path(os.environ["GITHUB_STEP_SUMMARY"]), "a") as summary:
               summary.write("\n".join(lines) + "\n")
