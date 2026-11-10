@@ -74,3 +74,71 @@ body{background:radial-gradient(ellipse at 10% 0%,#e7f2ee 0,transparent 34%),var
  .model-explainer{grid-template-columns:1fr}
 }
 @media(prefers-reduced-motion:reduce){.splash-mark,.splash-progress i{animation:none!important}.app-splash{transition:none!important}}
+
+
+/* Operational workspace layout: persistent navigation, clear hierarchy, compact data surfaces. */
+@media(min-width:1001px){
+ .app-shell{display:grid;grid-template-columns:218px minmax(0,1fr);grid-template-rows:76px auto 1fr auto;column-gap:25px;align-items:start;max-width:1480px;padding:0 30px}
+ .topbar{grid-column:1/-1;grid-row:1;width:100%}
+ .primary-nav{grid-column:1;grid-row:2/4;position:sticky;top:16px;display:flex;flex-direction:column;align-items:stretch;gap:5px;min-height:calc(100vh - 112px);padding:14px 11px;margin:0;border-radius:16px;background:#fff;border-color:#dce8e5;box-shadow:0 8px 24px #193d3a08}
+ .page-intro{grid-column:2;grid-row:2;align-self:center;width:100%;min-height:63px;margin:0 0 13px}
+ main{grid-column:2;grid-row:3;min-width:0;width:100%}
+ footer{grid-column:1/-1;grid-row:4;width:100%;margin-top:5px}
+}
+.nav-caption{display:flex;flex-direction:column;gap:5px;padding:7px 10px 14px;margin:0 0 4px;border-bottom:1px solid #e8efec}
+.nav-caption>span{color:#829694;font:700 9px var(--mono);letter-spacing:.14em}
+.nav-caption small{color:#284f4d;font-size:12px;font-weight:650}
+.primary-nav button{justify-content:flex-start;width:100%;height:43px;padding:0 11px;border-radius:10px;font-size:12px;text-align:left}
+.nav-icon{width:27px;height:27px;display:grid;place-items:center;flex:none;border-radius:8px;background:#f0f6f3;color:#567c76}
+.nav-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.primary-nav button[aria-current=page]{background:#e8f4ee;color:#154d46;box-shadow:inset 3px 0 #087e83}
+.primary-nav button[aria-current=page] .nav-icon{background:#d5ebe0;color:#087e83}
+.nav-status{display:flex;align-items:center;gap:9px;margin: auto 2px 0;padding:13px 8px 5px;border-top:1px solid #e8efec;color:#627a78;font-size:10px;white-space:normal}
+.nav-status i{flex:none}
+.page-intro{padding:10px 2px 0}
+.page-intro h2{font-size:24px;letter-spacing:-.035em}
+.page-intro>p{color:#66807d;font-size:11px}
+.hero{position:relative;overflow:hidden}
+.hero-copy{position:relative;z-index:1}
+.hero-art{pointer-events:none}
+.metrics-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
+.metric-card{position:relative;overflow:hidden;min-height:116px;padding:16px 18px;border-radius:13px;box-shadow:0 3px 12px #193d3a05}
+.metric-card:after{position:absolute;inset:0 auto 0 0;width:3px;background:#a9cfc0;content:""}
+.metric-highlight:after{background:#087e83}
+.metric-top{font-size:9px}
+.metric-card>strong{font-size:25px}
+.panel{box-shadow:0 4px 17px #193d3a07}
+.panel-heading h2,.settings-dialog h2{font-size:18px}
+.page-panel{min-height:260px}
+.page-panel .table-scroll{margin-top:12px}
+.page-panel .table-scroll td,.page-panel .table-scroll th{padding-top:12px;padding-bottom:12px}
+.table-panel{box-shadow:0 4px 17px #193d3a07}
+.freshness-card{align-items:center}
+@media(max-width:1000px){
+ .app-shell{display:block}
+ .primary-nav{position:sticky;top:0;flex-direction:row;align-items:center;min-height:57px}
+ .nav-caption{display:none}
+ .primary-nav button{width:auto;justify-content:center}
+ .nav-status{margin:0 0 0 auto;padding:0;border:0;white-space:nowrap}
+ .page-intro{margin-top:5px}
+}
+@media(max-width:760px){
+ .app-shell{display:block}
+ .primary-nav{top:0;justify-content:flex-start;flex-wrap:nowrap}
+ .primary-nav button{width:auto;gap:6px;padding:0 9px}
+ .primary-nav button[aria-current=page]{box-shadow:inset 0 -3px #087e83}
+ .nav-status{display:none}
+ .page-intro{margin-bottom:10px}
+ .metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(min-width:761px) and (max-width:1000px){.metrics-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:430px){
+ .primary-nav button{height:38px;font-size:10px}
+ .nav-icon{width:22px;height:22px}
+ .nav-icon svg{width:14px;height:14px}
+ .metrics-grid{gap:8px}
+ .metric-card{padding:12px 11px}
+ .metric-card>strong{font-size:21px}
+ .metric-card>small{font-size:9px;line-height:1.4}
+ .summary-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
