@@ -147,15 +147,47 @@ function readRoutePlans() {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   } catch (_) { return {}; }
 }
+function routePlanFields(route) {
+  const value = readRoutePlans()[route] || {};
+  const trips = Number(value.trips), target = Number(value.target);
+  return {
+    trips: Number.isInteger(trips) && trips > 0 && trips <= 1000 ? trips : null,
+    target: Number.isFinite(target) && target > 0 && target <= 100000 ? target : null,
+  };
+}
+function exportRoutePlan() {
+  const forecasts = Array.isArray(state.data?.forecasts) ? state.data.forecasts : [];
+  if (!forecasts.length) { toast("Generate a forecast before exporting a planning scenario", true); return; }
+  const header = ["service_date", "route_id", "predicted_boardings", "lower_90_approx", "upper_90_approx", "operator_planned_trips_per_day", "operator_target_boardings_per_trip", "trips_at_target_point_forecast", "trips_at_target_upper_approx", "additional_trips_at_upper_approx"];
+  const quote = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const rows = forecasts.slice().sort((a, b) => String(a.service_date).localeCompare(String(b.service_date)) || String(a.route_id).localeCompare(String(b.route_id), undefined, { numeric: true })).map((row) => {
+    const plan = routePlanFields(String(row.route_id));
+    const point = Math.max(0, Number(row.predicted_passengers) || 0);
+    const upper = Math.max(point, Number(row.upper_90_approx) || point);
+    const pointTrips = plan.target ? Math.ceil(point / plan.target) : "";
+    const upperTrips = plan.target ? Math.ceil(upper / plan.target) : "";
+    const gap = plan.trips && plan.target ? Math.max(0, upperTrips - plan.trips) : "";
+    return [row.service_date, row.route_id, point, row.lower_90_approx ?? "", row.upper_90_approx ?? "", plan.trips ?? "", plan.target ?? "", pointTrips, upperTrips, gap].map(quote).join(",");
+  });
+  const blob = new Blob(["\uFEFF", header.map(quote).join(","), "\r\n", rows.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = "bus_service_planning_scenario.csv"; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 function renderRoutes(data) {
   const forecasts = Array.isArray(data.forecasts) ? data.forecasts : [];
   const groups = new Map();
   for (const row of forecasts) {
     const route = String(row.route_id ?? "Unknown");
-    const group = groups.get(route) || { days: new Map() };
-    const daily = group.days.get(row.service_date) || 0;
-    group.days.set(row.service_date, daily + (Number(row.predicted_passengers) || 0));
-    groups.set(route, group);
+    const days = groups.get(route) || new Map();
+    const predicted = Math.max(0, Number(row.predicted_passengers) || 0);
+    const daily = days.get(row.service_date) || { predicted: 0, lower: 0, upper: 0 };
+    daily.predicted += predicted;
+    daily.lower += Math.max(0, Number(row.lower_90_approx) || 0);
+    daily.upper += Math.max(predicted, Number(row.upper_90_approx) || predicted);
+    days.set(row.service_date, daily);
+    groups.set(route, days);
   }
   const plans = readRoutePlans();
   const routes = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
@@ -165,21 +197,28 @@ function renderRoutes(data) {
   $("#routesTotal").textContent = routes.length.toLocaleString();
   $("#routesBoardings").textContent = Math.round(total).toLocaleString();
   $("#routesDailyAverage").textContent = routes.length && days ? Math.round(total / (routes.length * days)).toLocaleString() : "—";
-  $("#routeRows").innerHTML = routes.length ? routes.map(([route, group], routeIndex) => {
-    const peak = [...group.days.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  $("#routeRows").innerHTML = routes.length ? routes.map(([route, routeDays], routeIndex) => {
+    const peak = [...routeDays.entries()].sort((a, b) => b[1].predicted - a[1].predicted || a[0].localeCompare(b[0]))[0];
     const config = plans[route] || {};
     const trips = Number(config.trips), target = Number(config.target);
     const tripsValue = Number.isInteger(trips) && trips > 0 && trips <= 1000 ? trips : "";
     const targetValue = Number.isFinite(target) && target > 0 && target <= 100000 ? target : "";
     const hasPlan = tripsValue !== "" && targetValue !== "";
-    const perTrip = hasPlan ? peak[1] / trips : Number.NaN;
+    const pointPerTrip = hasPlan ? peak[1].predicted / trips : Number.NaN;
+    const upperPerTrip = hasPlan ? peak[1].upper / trips : Number.NaN;
+    const pointTrips = hasPlan ? Math.ceil(peak[1].predicted / target) : null;
+    const upperTrips = hasPlan ? Math.ceil(peak[1].upper / target) : null;
+    const gap = hasPlan ? Math.max(0, upperTrips - trips) : null;
     let signal = "Add assumptions", signalClass = "signal-muted";
-    if (hasPlan && perTrip > target) { signal = "Review service"; signalClass = "signal-alert"; reviewCount += 1; }
-    else if (hasPlan && perTrip >= target * 0.85) { signal = "Near target"; signalClass = "signal-near"; }
+    if (hasPlan && gap > 0) { signal = `Review · +${gap} trip${gap === 1 ? "" : "s"} at high estimate`; signalClass = "signal-alert"; reviewCount += 1; }
+    else if (hasPlan && pointPerTrip >= target * 0.85) { signal = "Near target"; signalClass = "signal-near"; }
     else if (hasPlan) { signal = "Within target"; signalClass = "signal-ok"; }
     const safeRoute = escapeText(route);
-    return `<tr><td><span class="route-pill">${safeRoute}</span></td><td>${prettyDate(peak[0])}</td><td class="numeric passenger-count">${Math.round(peak[1]).toLocaleString()}</td><td class="numeric"><label class="sr-only" for="trips-${routeIndex}">Planned trips per day for route ${safeRoute}</label><input id="trips-${routeIndex}" class="route-plan-input" type="number" min="1" max="1000" step="1" inputmode="numeric" data-route="${safeRoute}" data-field="trips" value="${tripsValue}" /></td><td class="numeric"><label class="sr-only" for="target-${routeIndex}">Target boardings per trip for route ${safeRoute}</label><input id="target-${routeIndex}" class="route-plan-input" type="number" min="1" max="100000" step="1" inputmode="numeric" data-route="${safeRoute}" data-field="target" value="${targetValue}" /></td><td class="numeric">${hasPlan ? Math.round(perTrip).toLocaleString() : "—"}</td><td><span class="planning-signal ${signalClass}">${signal}</span></td></tr>`;
-  }).join("") : '<tr class="empty-row"><td colspan="7">No forecast is available yet. Train a model after adding route counts.</td></tr>';
+    const boardingsRange = `${Math.round(peak[1].predicted).toLocaleString()} / ${Math.round(peak[1].upper).toLocaleString()}`;
+    const perTripRange = hasPlan ? `${Math.round(pointPerTrip).toLocaleString()} / ${Math.round(upperPerTrip).toLocaleString()}` : "—";
+    const tripRange = hasPlan ? `${pointTrips} / ${upperTrips}` : "—";
+    return `<tr><td><span class="route-pill">${safeRoute}</span></td><td>${prettyDate(peak[0])}</td><td class="numeric passenger-count" title="Point forecast / upper approximate range">${boardingsRange}</td><td class="numeric"><label class="sr-only" for="trips-${routeIndex}">Operator planned trips per day for route ${safeRoute}</label><input id="trips-${routeIndex}" class="route-plan-input" type="number" min="1" max="1000" step="1" inputmode="numeric" data-route="${safeRoute}" data-field="trips" value="${tripsValue}" /></td><td class="numeric"><label class="sr-only" for="target-${routeIndex}">Operator target boardings per trip for route ${safeRoute}</label><input id="target-${routeIndex}" class="route-plan-input" type="number" min="1" max="100000" step="1" inputmode="numeric" data-route="${safeRoute}" data-field="target" value="${targetValue}" /></td><td class="numeric" title="Daily average divided evenly by planned trips; not a peak-load estimate">${perTripRange}</td><td class="numeric" title="Trips per day calculated to keep daily average at or below your target: point / upper approximate estimate">${tripRange}</td><td><span class="planning-signal ${signalClass}">${signal}</span></td></tr>`;
+  }).join("") : '<tr class="empty-row"><td colspan="8">No forecast is available yet. Train a model after adding route counts.</td></tr>';
   $("#routesReview").textContent = routes.length ? reviewCount.toLocaleString() : "—";
 }
 function renderModel(data) {
@@ -284,6 +323,8 @@ function setup() {
     try { localStorage.setItem("busForecastRoutePlans", JSON.stringify(plans)); renderRoutes(state.data); }
     catch (_) { toast("Could not save route assumptions in this browser", true); }
   });
+  const exportPlanButton = $("#exportRoutePlan");
+  if (exportPlanButton) exportPlanButton.addEventListener("click", exportRoutePlan);
   $("#resetRoutePlans").addEventListener("click", () => {
     try { localStorage.removeItem("busForecastRoutePlans"); if (state.data) renderRoutes(state.data); toast("Route assumptions cleared on this device"); }
     catch (_) { toast("Could not clear route assumptions", true); }
