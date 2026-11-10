@@ -45,9 +45,10 @@ def fetch_page(params: dict[str, str]) -> list[dict]:
             if attempt == 3:
                 raise RuntimeError(f"MTA API remained unavailable after retries (HTTP {exc.code})") from exc
             time.sleep(min(2 ** attempt, 8))
-        except URLError as exc:
+        except (URLError, TimeoutError) as exc:
             if attempt == 3:
-                raise RuntimeError(f"Could not reach the MTA public-data API: {exc.reason}") from exc
+                reason = getattr(exc, "reason", str(exc))
+                raise RuntimeError(f"Could not reach the MTA public-data API: {reason}") from exc
             time.sleep(min(2 ** attempt, 8))
     return []
 
@@ -67,26 +68,31 @@ def fetch_daily_counts(
         raise ValueError("Routes must be comma-separated MTA route identifiers using letters, digits, '.', '+', '_' or '-'")
     selected_routes = sorted(set(selected_routes))
     route_filter = ",".join("'" + route + "'" for route in selected_routes)
-    where = (
-        f"transit_timestamp >= '{start:%Y-%m-%d}T00:00:00' "
-        f"AND transit_timestamp < '{(end + pd.Timedelta(days=1)):%Y-%m-%d}T00:00:00' "
-        f"AND bus_route in ({route_filter})"
-    )
     rows: list[dict] = []
-    offset = 0
-    while True:
-        page = fetch_page({
-            "$select": "date_trunc_ymd(transit_timestamp) as service_date,bus_route as route_id,sum(ridership) as passengers",
-            "$where": where,
-            "$group": "service_date,route_id",
-            "$order": "service_date,route_id",
-            "$limit": str(PAGE_SIZE),
-            "$offset": str(offset),
-        })
-        rows.extend(page)
-        if len(page) < PAGE_SIZE:
-            break
-        offset += len(page)
+    # Monthly windows keep Socrata queries bounded and avoid request timeouts
+    # when the source table scans several years of hourly fare-category rows.
+    for month in pd.period_range(start=start, end=end, freq="M"):
+        window_start = max(start, month.start_time.normalize())
+        window_end = min(end, month.end_time.normalize())
+        where = (
+            f"transit_timestamp >= '{window_start:%Y-%m-%d}T00:00:00' "
+            f"AND transit_timestamp < '{(window_end + pd.Timedelta(days=1)):%Y-%m-%d}T00:00:00' "
+            f"AND bus_route in ({route_filter})"
+        )
+        offset = 0
+        while True:
+            page = fetch_page({
+                "$select": "date_trunc_ymd(transit_timestamp) as service_date,bus_route as route_id,sum(ridership) as passengers",
+                "$where": where,
+                "$group": "service_date,route_id",
+                "$order": "service_date,route_id",
+                "$limit": str(PAGE_SIZE),
+                "$offset": str(offset),
+            })
+            rows.extend(page)
+            if len(page) < PAGE_SIZE:
+                break
+            offset += len(page)
     if not rows:
         raise ValueError(f"The MTA dataset returned no rows for routes {', '.join(selected_routes)} in the requested date range")
 
