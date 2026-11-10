@@ -8,6 +8,12 @@ An operationally oriented Python baseline for **daily passenger boardings per ro
 
 This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
 
+## Reproducible model training
+
+A dedicated [Train forecasting model workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/train-model.yml) runs on relevant source/data changes and can also be started manually from GitHub Actions. It trains the model, evaluates four expanding-window folds at a seven-day horizon, compares results with the seasonal-naive baseline, and uploads the fitted model, metrics, and out-of-fold predictions as a downloadable artifact (retained for 30 days).
+
+The latest training run ([run #1](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/runs/42828632328)) completed successfully on the synthetic demo dataset. Its aggregate backtest WAPE was **11.21% for the ML model** and **14.19% for seasonal naive** (MAE 48.62 vs. 61.58 passengers; RMSE 60.98 vs. 87.56). The model also beat the baseline on R10 and R35, while R22 was close (11.60% vs. 11.98% WAPE). These figures are reproducibility evidence for the generated sample only; they are not company validation or a guarantee of future accuracy. Download the **bus-demand-model-and-backtest** artifact from the run to inspect the model bundle, metrics, and fold-level predictions.
+
 ## Operator workspace
 
 The web app now opens with a branded opening screen that waits for the forecast service before entering the dashboard and has dedicated **Overview**, **Forecasts**, **Routes**, **Data**, and **Model** pages. Route summaries aggregate the forecast window by route, the model page compares WAPE with the seasonal-naive baseline, and the data page shows source coverage and forecast freshness.
