@@ -35,6 +35,14 @@ The **Build Windows desktop app** GitHub Actions workflow packages a Windows bui
 
 The repository includes a Docker image for an approved Linux host. It requires a bearer key and should be served behind HTTPS. Mount persistent storage at `/var/lib/bus-forecast`; otherwise uploads and model files can be lost when the container is replaced.
 
+#### Deploy a public demo website
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2FVital1506%2Fbus-passenger-demand-forecasting)
+
+The included `render.yaml` configures the API and dashboard as one HTTPS website and generates a bearer key during deployment. After the service is live, copy `BUS_FORECAST_API_KEY` from its Render environment settings, open the site’s **Settings**, and save that key to connect the dashboard. Use **Try the synthetic demo** to verify the forecasting workflow.
+
+This free setup is for demonstration only: it can sleep when idle and its filesystem is temporary, so uploaded data and trained models can be lost after a restart or redeploy. Do not upload company data to this demo. For operational use, choose an approved paid host with persistent storage, HTTPS, access controls, backups, and company approval before importing data.
+
 ```bash
 docker build -t bus-demand-forecast .
 docker run --rm -p 8000:8000 \
