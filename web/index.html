@@ -66,12 +66,12 @@
         </div>
       </header>
       <nav class="primary-nav" id="mainNav" aria-label="Main navigation">
-        <div class="nav-caption"><span>WORKSPACE</span><small>Transit operations</small></div>
-        <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Overview</button>
+        <div class="nav-caption"><span>WORKSPACE</span><small>Start with the guide</small></div>
+        <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Start here</button>
         <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Forecasts</button>
         <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
-        <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> Data</button>
-        <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> Model</button>
+        <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> My data</button>
+        <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> How it works</button>
         <span class="nav-status"><i></i><span>API checks every minute</span></span>
       </nav>
       <div class="page-intro"><div><p class="eyebrow">OPERATIONS WORKSPACE</p><h2 id="pageTitle">Overview</h2></div><p id="pageSummary">A quick read on service demand and forecast freshness.</p></div>
@@ -111,24 +111,33 @@
           </section>
 
           <section id="workflowPanel" class="panel workflow-panel" data-pages="overview data">
-            <div class="panel-heading"><div><p class="eyebrow">YOUR NEXT STEPS</p><h2>How to use this forecast</h2></div><span class="step-count">01—03</span></div>
+            <div class="panel-heading"><div><p class="eyebrow">QUICK START · ABOUT 1 MINUTE</p><h2>Start with one daily count</h2></div><span class="step-count">1 / 3</span></div>
             <div id="operatorControls">
-              <div class="flow-step"><span class="step-number">01</span><div><strong>Upload daily passenger counts</strong><p>Choose a CSV with <code>service_date</code>, <code>route_id</code>, and <code>passengers</code>.</p></div></div>
-              <label id="dropzone" class="dropzone" for="csvFile"><span class="upload-mark">↑</span><span><strong>Choose a CSV file</strong><small>or drop it here · up to 20 MB</small></span><input id="csvFile" type="file" accept=".csv,text/csv" /></label>
-              <p class="schedule-note">Passenger counts need <code>service_date</code>, <code>route_id</code>, <code>passengers</code>. A timetable with <code>From</code>/<code>To</code> creates an illustrative synthetic scenario, not observed passenger demand.</p>
-              <div class="flow-controls"><label for="missingDays">Missing dates</label><select id="missingDays"><option value="error">Flag missing dates</option><option value="zero">Treat as zero</option></select><a id="downloadSample" href="/api/template.csv" class="text-link" download>Download sample CSV</a></div>
-              <button id="demoButton" class="demo-button" type="button">Load sample into workspace <span>↗</span></button>
-              <div class="flow-divider"></div>
-              <div class="flow-step"><span class="step-number">02</span><div><strong>Train and compare</strong><p>Check the model against a same-weekday baseline before using results.</p></div></div>
-              <div class="training-controls"><label for="trainDays">Forecast horizon</label><select id="trainDays"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select><button id="trainButton" class="button button-primary" type="button">Train model <span>→</span></button></div>
-              <div class="flow-step last-step"><span class="step-number">03</span><div><strong>Review before planning</strong><p>Forecasts are estimates. Compare them with actual passenger counts.</p></div></div>
+              <p class="guide-intro">Enter the number of passengers who boarded on a route for one day. Add counts as you collect them; you do not need to prepare a file.</p>
+              <form id="quickCountForm" class="quick-count-form">
+                <label>Starting point<input id="countOrigin" name="origin" required maxlength="48" autocomplete="address-level2" placeholder="e.g. Central Station" /></label>
+                <label>Destination<input id="countDestination" name="destination" required maxlength="48" placeholder="e.g. North Market" /></label>
+                <label>Service date<input id="countDate" name="service_date" type="date" required /></label>
+                <label>Total boardings that day<input id="countPassengers" name="passengers" type="number" min="0" max="1000000" step="1" required placeholder="e.g. 240" /></label>
+                <button id="saveCountButton" class="button button-primary" type="submit">Save this daily count <span>→</span></button>
+              </form>
+              <p class="count-hint">Only enter a count you observed or can verify. Use the same place names for this route each day. If you do not have counts yet, try the clearly labelled synthetic example below.</p>
+              <div class="flow-controls missing-policy"><label for="missingDays">If a date has no count</label><select id="missingDays"><option value="error">Stop and ask me (recommended)</option><option value="zero">Use zero only if there was no service</option></select></div>
+              <details class="advanced-data"><summary>Have a file instead? Import daily counts</summary>
+                <label id="dropzone" class="dropzone" for="csvFile"><span class="upload-mark">↑</span><span><strong>Choose a CSV file</strong><small>Columns: date, route, passengers · up to 20 MB</small></span><input id="csvFile" type="file" accept=".csv,text/csv" /></label>
+                <p class="schedule-note">A timetable can show routes, but it does not contain passenger demand. Timetable-only demos are synthetic examples, not observed counts.</p>
+                <div class="flow-controls"><a id="downloadSample" href="/api/template.csv" class="text-link" download>Download sample CSV</a></div>
+              </details>
+              <div class="training-controls"><label for="trainDays">Forecast length</label><select id="trainDays"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select><button id="trainButton" class="button button-primary" type="button">Train my forecast <span>→</span></button></div>
+              <button id="demoButton" class="demo-button" type="button">Try the synthetic example <span>↗</span></button>
+              <p class="training-requirement">For a useful machine-learning forecast, build a continuous history of about 118 days per route first. One count is saved now, but it is not enough to train a reliable model yet.</p>
             </div>
             <div id="publicInfo" class="public-info hidden">
               <div class="demo-callout"><span class="demo-callout-icon">i</span><div><strong>You’re viewing an example</strong><p>These forecasts use synthetic passenger counts. They are here to show how the site works, not to represent a real bus service.</p></div></div>
               <ol class="demo-steps">
-                <li><strong>Read the chart</strong><span>It adds the route estimates together for each service day.</span></li>
-                <li><strong>Compare routes</strong><span>Open Forecasts to see each route and service date.</span></li>
-                <li><strong>Understand the range</strong><span>The range is approximate and based on past backtest errors.</span></li>
+                <li><strong>See how demand may change</strong><span>The chart combines the sample routes for each future day.</span></li>
+                <li><strong>Open Forecasts</strong><span>See the example estimate for each route and date.</span></li>
+                <li><strong>Remember what it is</strong><span>It is generated sample data, not a prediction for your town or bus route.</span></li>
               </ol>
               <a id="publicDownloadSample" href="/api/public-demo/sample.csv" class="text-link sample-link" download>Download the synthetic sample data ↓</a>
             </div>
@@ -171,7 +180,8 @@ Content-Type: application/json
         </section>
         <section class="page-panel panel" data-pages="model" id="modelPage">
           <div class="panel-heading"><div><p class="eyebrow">MODEL QUALITY</p><h2>Model & validation</h2></div><span class="horizon-badge">Time-based evaluation</span></div>
-          <p class="page-lead">Model quality is compared with a same-weekday seasonal-naive baseline using historical validation. Lower WAPE is better; it does not guarantee future accuracy.</p>
+          <p class="page-lead">In plain language: the model looks at daily counts you provide, learns patterns such as weekday differences, and estimates future counts. A place name by itself does not reveal how many people actually ride a bus.</p>
+          <div class="model-explainer"><div><strong>1. Record what happened</strong><p>Enter one route and one date at a time, or import an existing daily-count file. Do not guess missing passenger counts.</p></div><div><strong>2. Build enough history</strong><p>The prototype needs about 118 continuous dates per route before its time-based model check can run.</p></div><div><strong>3. Forecast and explain</strong><p>It compares the machine-learning model with a simple weekday baseline and shows an approximate error range.</p></div><div><strong>4. Review with people</strong><p>Compare estimates with actual counts and service changes. Sample forecasts are for learning, not operational decisions.</p></div></div>
           <div class="summary-cards"><article><small>Model WAPE</small><strong id="modelPageWape">—</strong></article><article><small>Seasonal baseline</small><strong id="modelPageBaseline">—</strong></article><article><small>Current result</small><strong id="modelWinner">—</strong></article><article><small>Trained through</small><strong id="modelTrainedThrough">—</strong></article></div>
           <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>

@@ -45,7 +45,7 @@ function toast(message, error = false) {
 }
 function setBusy(busy, label = "Working…") {
   state.busy = busy;
-  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
+  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
   $("#trainButton").innerHTML = busy ? `${label} <span>···</span>` : "Train / retrain model <span>→</span>";
 }
 function prettyDate(value) {
@@ -117,7 +117,7 @@ function render(data) {
   $("#modelCompare").textContent = Number.isFinite(ml) && Number.isFinite(baseline) ? `Baseline ${percent(baseline)} · ${ml <= baseline ? "model leads" : "baseline leads"}` : "Rolling time based validation";
   $("#horizonLabel").textContent = data.model_trained ? `${data.horizon_days} days` : "—";
   $("#modelState").textContent = data.model_trained ? `Trained through ${prettyDate(data.trained_through)}` : "No model trained";
-  const source = data.source === "synthetic demo data" ? "Synthetic sample data" : data.source === "synthetic schedule demo data" ? "Synthetic timetable scenario" : data.source === "synthetic schedule demo data" ? "Synthetic timetable scenario" : data.source === "company upload" ? "Operator data uploaded" : "Waiting for data";
+  const source = ({ "synthetic demo data": "Synthetic sample data", "synthetic schedule demo data": "Synthetic timetable scenario", "company upload": "Operator data uploaded", "company feed": "Daily counts entered or imported" })[data.source] || "Waiting for data";
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
   $("#workflowNote").textContent = state.publicDemo ? (state.operatorAccess ? "Synthetic preview shown because no operator data is loaded yet. Upload daily counts, or a timetable to create a labelled synthetic scenario." : "This public preview is read-only. An authorized operator key is required to upload data or train a model.") : data.source === "synthetic schedule demo data" ? "This timetable-based scenario is synthetic, not observed passenger demand. Replace it with actual passenger counts before operational use." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
@@ -127,11 +127,11 @@ function render(data) {
 }
 
 const PAGE_INFO = {
-  overview: ["Overview", "A quick read on service demand and forecast freshness."],
+  overview: ["Start here", "Choose the example or record a daily passenger count."],
   forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
   routes: ["Routes", "Compare forecast totals and validation scores by route."],
-  data: ["Data", "Inspect source coverage, freshness, and ingestion guidance."],
-  model: ["Model", "Review model performance against a time-based baseline."]
+  data: ["My data", "See which passenger counts are saved and when they were updated."],
+  model: ["How it works", "A plain-language guide to the data and forecast."]
 };
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function dismissSplash() {
@@ -307,7 +307,7 @@ function renderExtraPages(data) { renderRoutes(data); renderModel(data); renderD
 function setPublicDemoMode(enabled, allowOperatorEdits = false) {
   state.publicDemo = enabled;
   state.operatorAccess = allowOperatorEdits;
-  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays")].forEach((node) => { if (node) node.disabled = state.busy || (enabled && !allowOperatorEdits); });
+  [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = state.busy || (enabled && !allowOperatorEdits); });
   $("#operatorControls").classList.toggle("hidden", enabled && !allowOperatorEdits);
   $("#publicInfo").classList.toggle("hidden", !enabled);
   $("#operatorForecastTools").classList.toggle("hidden", enabled);
@@ -368,7 +368,12 @@ async function withBusy(label, operation) {
   if (state.busy) return;
   setBusy(true, label);
   try { const result = await operation(); if (result.message) toast(result.message); if (result.status) { setPublicDemoMode(Boolean(result.status.public_demo), Boolean(result.status.public_demo ? false : result.status.data_loaded)); render(result.status); } else await refreshStatus(); }
-  catch (error) { toast(error.message || "Something went wrong", true); }
+  catch (error) {
+    const message = error.message || "Something went wrong";
+    if (/missing route\/date observations detected/i.test(message)) toast("This route has days without a count. Add the missing daily counts, or choose zero only for a confirmed no-service day.", true);
+    else if (/need at least \d+ continuous calendar days/i.test(message)) toast("There is not enough history to train yet. Keep recording daily counts until this route has at least 118 consecutive days.", true);
+    else toast(message, true);
+  }
   finally { setBusy(false); }
 }
 async function train(options = {}) {
@@ -417,6 +422,35 @@ function setup() {
     catch (_) { toast("Could not clear route assumptions", true); }
   });
   $("#trainButton").addEventListener("click", () => withBusy("Training…", () => train()));
+  const countDate = $("#countDate");
+  if (countDate) {
+    const now = new Date();
+    const localToday = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    countDate.value = localToday;
+    countDate.max = localToday;
+  }
+  $("#quickCountForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const origin = $("#countOrigin").value.trim().replace(/\s+/g, " "), destination = $("#countDestination").value.trim().replace(/\s+/g, " ");
+    const serviceDate = countDate.value, passengers = Number($("#countPassengers").value);
+    if (!origin || !destination || origin.toLocaleLowerCase() === destination.toLocaleLowerCase()) {
+      toast("Enter two different places for this route", true);
+      return;
+    }
+    if (!serviceDate || serviceDate > countDate.max || !Number.isInteger(passengers) || passengers < 0) {
+      toast("Check the service date and enter a whole passenger count of zero or more", true);
+      return;
+    }
+    const routeId = `${origin} → ${destination}`;
+    withBusy("Saving count…", async () => {
+      const result = await api("/api/data/ingest", {
+        method: "POST",
+        body: JSON.stringify({ source_system: "manual_daily_entry", missing_days: $("#missingDays").value, records: [{ service_date: serviceDate, route_id: routeId, passengers }] })
+      });
+      $("#countPassengers").value = "";
+      return result;
+    });
+  });
   $("#demoButton").addEventListener("click", () => withBusy("Running demo…", async () => { await api("/api/data/demo", { method: "POST" }); return train({ horizon: 7, folds: 4 }); }));
   $("#refreshForecast").addEventListener("click", () => withBusy("Refreshing…", () => api("/api/forecast", { method: "POST", body: JSON.stringify({ days: Number($("#forecastDays").value), missing_days: $("#missingDays").value }) })));
   $("#downloadForecast").addEventListener("click", (event) => { event.preventDefault(); const publicDemo = state.publicDemo; downloadFile(publicDemo ? "/api/public-demo/forecast.csv" : "/api/forecast.csv", publicDemo ? "bus_demand_synthetic_demo_forecast.csv" : "bus_demand_forecast.csv").catch((error) => toast(error.message, true)); });
