@@ -25,12 +25,13 @@
         </div>
       </header>
       <nav class="primary-nav" id="mainNav" aria-label="Main navigation">
-        <button type="button" data-view="overview" aria-current="page"><span>⌂</span> Overview</button>
-        <button type="button" data-view="forecasts"><span>⌁</span> Forecasts</button>
-        <button type="button" data-view="routes"><span>↗</span> Routes</button>
-        <button type="button" data-view="data"><span>▤</span> Data</button>
-        <button type="button" data-view="model"><span>◉</span> Model</button>
-        <span class="nav-status"><i></i> Checks every minute</span>
+        <div class="nav-caption"><span>WORKSPACE</span><small>Transit operations</small></div>
+        <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Overview</button>
+        <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Forecasts</button>
+        <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
+        <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> Data</button>
+        <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> Model</button>
+        <span class="nav-status"><i></i><span>API checks every minute</span></span>
       </nav>
       <div class="page-intro"><div><p class="eyebrow">OPERATIONS WORKSPACE</p><h2 id="pageTitle">Overview</h2></div><p id="pageSummary">A quick read on service demand and forecast freshness.</p></div>
 
