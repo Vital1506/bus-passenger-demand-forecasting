@@ -1,0 +1,72 @@
+name: Train forecasting model
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/train-model.yml"
+      - "src/**"
+      - "data/sample_daily_ridership.csv"
+      - "requirements.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  train-and-backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install project dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Train and run rolling-origin backtest
+        run: >-
+          python -m src.train
+          --data data/sample_daily_ridership.csv
+          --model-out artifacts/model.joblib
+          --horizon 7
+          --folds 4
+          --metrics-out artifacts/backtest_metrics.json
+          --predictions-out artifacts/backtest_predictions.csv
+      - name: Summarize synthetic demo results
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          m = json.loads(Path("artifacts/backtest_metrics.json").read_text())
+          model = m["model"]
+          baseline = m["seasonal_naive"]
+          lines = [
+              "## Model training and rolling-origin backtest",
+              "",
+              "**Dataset:** synthetic demo data. These results do not represent company or real-world operational performance.",
+              "",
+              f"- Backtest: {m['backtest_folds']} expanding-window folds × {m['horizon_days']} forecast days",
+              f"- Model WAPE: {model['wape']:.2%} | MAE: {model['mae']:.2f} | RMSE: {model['rmse']:.2f}",
+              f"- Seasonal-naive WAPE: {baseline['wape']:.2%} | MAE: {baseline['mae']:.2f} | RMSE: {baseline['rmse']:.2f}",
+              "",
+              "Route-level metrics and out-of-fold predictions are included in the downloadable artifact.",
+          ]
+          with open(Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]), "a") as f:
+              f.write("\n".join(lines) + "\n")
+          PY
+      - name: Upload trained model and evaluation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bus-demand-model-and-backtest
+          path: |
+            artifacts/model.joblib
+            artifacts/backtest_metrics.json
+            artifacts/backtest_predictions.csv
+          if-no-files-found: error
+          retention-days: 30
