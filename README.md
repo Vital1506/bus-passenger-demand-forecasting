@@ -10,7 +10,7 @@ This is a strong starting implementation, not a claim of production readiness or
 
 ## Operator workspace
 
-The web app now opens with a brief branded splash and has dedicated **Overview**, **Forecasts**, **Routes**, **Data**, and **Model** pages. Route summaries aggregate the forecast window by route, the model page compares WAPE with the seasonal-naive baseline, and the data page shows source coverage and forecast freshness.
+The web app now opens with a branded opening screen that waits for the forecast service before entering the dashboard and has dedicated **Overview**, **Forecasts**, **Routes**, **Data**, and **Model** pages. Route summaries aggregate the forecast window by route, the model page compares WAPE with the seasonal-naive baseline, and the data page shows source coverage and forecast freshness.
 
 The dashboard checks its API every 60 seconds while the page is open. Forecasts update after new records are ingested and the model/forecast is refreshed. A live ticketing or vehicle telemetry feed is **not connected by default**; configure an approved data integration and update schedule before treating the app as real-time operations software.
 

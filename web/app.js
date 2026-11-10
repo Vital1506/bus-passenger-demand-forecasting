@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview" };
+const state = { data: null, installPrompt: null, busy: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
@@ -124,7 +124,40 @@ const PAGE_INFO = {
   data: ["Data", "Inspect source coverage, freshness, and ingestion guidance."],
   model: ["Model", "Review model performance against a time-based baseline."]
 };
-function hideSplash() { const splash = $("#appSplash"); if (splash) splash.classList.add("is-hidden"); }
+function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
+function dismissSplash() {
+  if (!state.opening) return;
+  state.opening = false;
+  clearTimeout(state.openingTimer);
+  const splash = $("#appSplash");
+  if (splash) { splash.setAttribute("aria-busy", "false"); splash.classList.add("is-hidden"); }
+  const shell = $("#appShell");
+  if (shell) shell.removeAttribute("aria-hidden");
+  const heading = $("#pageTitle");
+  if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus({ preventScroll: true }); }
+}
+async function finishSplash(connected) {
+  if (!state.opening) return;
+  const remaining = Math.max(0, 700 - (Date.now() - state.openingStartedAt));
+  if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
+  if (!state.opening) return;
+  const splash = $("#appSplash");
+  splash.setAttribute("aria-busy", "false");
+  splash.classList.toggle("is-ready", connected);
+  splash.classList.toggle("is-error", !connected);
+  $("#splashProgress").classList.toggle("is-complete", connected);
+  if (connected) {
+    setSplashStatus("Forecast ready. Opening dashboard…");
+    $("#openDashboard").classList.remove("hidden");
+    $("#openDashboard").focus({ preventScroll: true });
+    state.openingTimer = setTimeout(dismissSplash, 1600);
+  } else {
+    setSplashStatus("The forecast service could not be reached. Check your connection and try again.");
+    $("#retryOpening").classList.remove("hidden");
+    $("#offlineOpening").classList.remove("hidden");
+    $("#retryOpening").focus({ preventScroll: true });
+  }
+}
 function navigate(view, updateHash = true) {
   if (!PAGE_INFO[view]) view = "overview";
   state.view = view;
@@ -278,16 +311,27 @@ function setPublicDemoMode(enabled) {
   $("#downloadForecast").href = enabled ? "/api/public-demo/forecast.csv" : "/api/forecast.csv";
 }
 async function refreshStatus() {
+  let connected = false;
   try {
+    if (state.opening) setSplashStatus("Checking the forecast service…");
     if (accessKey()) {
-      try { setPublicDemoMode(false); render(await api("/api/status")); setConnection(true); return; }
+      try { setPublicDemoMode(false); render(await api("/api/status")); setConnection(true); connected = true; }
       catch (error) { if (!error.message.includes("access key")) throw error; }
     }
-    setPublicDemoMode(true);
-    render(await api("/api/public-demo/status"));
-    setConnection(true);
-  } catch (error) { setConnection(false); if (error.message.includes("access key")) toast(error.message, true); }
-  finally { hideSplash(); }
+    if (!connected) {
+      setPublicDemoMode(true);
+      if (state.opening) setSplashStatus("Loading the synthetic sample forecast…");
+      render(await api("/api/public-demo/status"));
+      setConnection(true);
+      connected = true;
+    }
+  } catch (error) {
+    setConnection(false);
+    if (error.message.includes("access key")) toast(error.message, true);
+  } finally {
+    if (state.opening) await finishSplash(connected);
+  }
+  return connected;
 }
 async function withBusy(label, operation) {
   if (state.busy) return;
@@ -304,9 +348,20 @@ async function train(options = {}) {
 function setup() {
   const initialView = location.hash.slice(1);
   navigate(PAGE_INFO[initialView] ? initialView : "overview", false);
-  window.setTimeout(hideSplash, 900);
   $("#mainNav").addEventListener("click", (event) => { const button = event.target.closest("[data-view]"); if (button) navigate(button.dataset.view); });
   window.addEventListener("hashchange", () => { const view = location.hash.slice(1); if (PAGE_INFO[view]) navigate(view, false); });
+  $("#openDashboard").addEventListener("click", dismissSplash);
+  $("#offlineOpening").addEventListener("click", dismissSplash);
+  $("#retryOpening").addEventListener("click", () => {
+    state.opening = true;
+    state.openingStartedAt = Date.now();
+    $("#appSplash").classList.remove("is-error", "is-ready");
+    $("#appSplash").setAttribute("aria-busy", "true");
+    $("#retryOpening").classList.add("hidden");
+    $("#offlineOpening").classList.add("hidden");
+    setSplashStatus("Checking the forecast service…");
+    refreshStatus();
+  });
   $("#settingsButton").addEventListener("click", () => { $("#apiKey").value = accessKey(); $("#apiUrl").value = localStorage.getItem("busForecastApiUrl") || ""; $("#settingsDialog").showModal(); });
   $("#saveKey").addEventListener("click", () => { const key = $("#apiKey").value.trim(), rawUrl = $("#apiUrl").value.trim(); if (rawUrl) { try { const parsed = new URL(rawUrl); if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(); localStorage.setItem("busForecastApiUrl", parsed.origin); } catch (_) { toast("Enter a valid API address starting with http:// or https://", true); return; } } else localStorage.removeItem("busForecastApiUrl"); key ? localStorage.setItem("busForecastApiKey", key) : localStorage.removeItem("busForecastApiKey"); $("#settingsDialog").close(); refreshStatus(); });
   $("#clearKey").addEventListener("click", () => { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); $("#apiKey").value = ""; $("#apiUrl").value = ""; toast("Connection reset on this device"); });

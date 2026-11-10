@@ -11,8 +11,49 @@
     <title>Bus Demand Forecast</title>
   </head>
   <body>
-    <div id="appSplash" class="app-splash" role="status" aria-live="polite"><div class="splash-mark"><img src="/static/icon.svg" alt="" /></div><strong>BUS DEMAND</strong><span>Preparing your route outlook</span><div class="splash-progress"><i></i></div></div>
-    <div class="app-shell">
+    <div id="appSplash" class="app-splash" role="dialog" aria-modal="true" aria-labelledby="splashTitle" aria-describedby="splashDescription" aria-busy="true">
+      <div class="splash-layout">
+        <div class="splash-brand">
+          <div class="splash-mark"><img src="/static/icon.svg" alt="" /></div>
+          <div><span>TRANSIT INTELLIGENCE</span><strong>BUS DEMAND</strong></div>
+          <span class="splash-prototype">PROTOTYPE</span>
+        </div>
+        <div class="splash-main">
+          <div class="splash-copy">
+            <p class="splash-eyebrow"><i></i> PASSENGER DEMAND OUTLOOK</p>
+            <h1 id="splashTitle">Plan ahead,<br /><em>route by route.</em></h1>
+            <p id="splashDescription">Explore a seven-day passenger demand forecast, compare routes, and try planning scenarios in this interactive prototype.</p>
+            <ul class="splash-features" aria-label="Dashboard features">
+              <li><span>01</span> Seven-day outlook</li>
+              <li><span>02</span> Route comparisons</li>
+              <li><span>03</span> Planning scenarios</li>
+            </ul>
+          </div>
+          <div class="splash-art" aria-hidden="true">
+            <div class="splash-orbit splash-orbit-a"></div><div class="splash-orbit splash-orbit-b"></div>
+            <svg viewBox="0 0 440 330" role="presentation">
+              <path class="splash-route" d="M66 263C118 263 111 201 170 201s56-106 117-106 54 105 91 105" />
+              <circle class="splash-stop" cx="66" cy="263" r="9" /><circle class="splash-stop" cx="170" cy="201" r="9" /><circle class="splash-stop" cx="287" cy="95" r="9" /><circle class="splash-stop" cx="378" cy="200" r="9" />
+              <rect class="splash-route-card" x="125" y="117" width="190" height="96" rx="18" />
+              <image href="/static/icon.svg" x="143" y="133" width="46" height="46" />
+              <text x="201" y="153" class="splash-route-label">ROUTE OUTLOOK</text><text x="201" y="181" class="splash-route-value">NEXT 7 DAYS</text>
+              <text x="58" y="294" class="splash-stop-label">R10</text><text x="350" y="230" class="splash-stop-label">R22</text>
+            </svg>
+          </div>
+        </div>
+        <div class="splash-bottom">
+          <div class="splash-loading-row"><span id="splashLoading" aria-live="polite">Connecting to the forecast service…</span><span class="splash-demo-label"><i></i> SYNTHETIC DEMO</span></div>
+          <div id="splashProgress" class="splash-progress" aria-hidden="true"><i></i></div>
+          <div class="splash-actions">
+            <button id="openDashboard" class="button button-primary hidden" type="button">Open dashboard <span>→</span></button>
+            <button id="retryOpening" class="button button-primary hidden" type="button">Retry connection <span>↻</span></button>
+            <button id="offlineOpening" class="button button-quiet hidden" type="button">Continue to dashboard</button>
+          </div>
+          <small class="splash-footnote">Sample data is synthetic. Company data is not connected.</small>
+        </div>
+      </div>
+    </div>
+    <div class="app-shell" id="appShell" aria-hidden="true">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Bus Demand Forecast home">
           <img src="/static/icon.svg" width="38" height="38" alt="" />
