@@ -110,14 +110,25 @@ function render(data) {
   const source = data.source === "synthetic demo data" ? "Synthetic sample data" : data.source === "company upload" ? "Operator data uploaded" : "Waiting for data";
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
-  $("#workflowNote").textContent = state.publicDemo ? "Public read-only preview using synthetic data. Configure an operator API key in Settings to upload data or train models." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
+  $("#workflowNote").textContent = state.publicDemo ? "This public preview is read-only. An authorized operator key is required to upload data or train a model." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
   renderChart(data.forecasts);
   renderTable(data.forecasts);
 }
 function setPublicDemoMode(enabled) {
   state.publicDemo = enabled;
   [$("#csvFile"), $("#trainButton"), $("#refreshForecast"), $("#demoButton"), $("#missingDays"), $("#forecastDays"), $("#trainDays")].forEach((node) => { if (node) node.disabled = enabled || state.busy; });
-  $("#downloadSample").href = enabled ? "/api/public-demo/sample.csv" : "/api/template.csv";
+  $("#operatorControls").classList.toggle("hidden", enabled);
+  $("#publicInfo").classList.toggle("hidden", !enabled);
+  $("#operatorForecastTools").classList.toggle("hidden", enabled);
+  $("#publicForecastBadge").classList.toggle("hidden", !enabled);
+  $("#heroCta").href = enabled ? "#forecast-panel" : "#workflowPanel";
+  $("#heroCta").innerHTML = enabled ? "Explore the forecast <span>↓</span>" : "Upload daily counts <span>→</span>";
+  $("#demoBadge").classList.toggle("hidden", !enabled);
+  document.body.classList.toggle("public-demo-mode", enabled);
+  const sampleLink = $("#downloadSample");
+  if (sampleLink) sampleLink.href = enabled ? "/api/public-demo/sample.csv" : "/api/template.csv";
+  const publicSampleLink = $("#publicDownloadSample");
+  if (publicSampleLink) publicSampleLink.href = "/api/public-demo/sample.csv";
   $("#downloadForecast").href = enabled ? "/api/public-demo/forecast.csv" : "/api/forecast.csv";
 }
 async function refreshStatus() {
