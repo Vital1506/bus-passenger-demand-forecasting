@@ -86,9 +86,13 @@ docker run --rm -p 8000:8000 \
 
 Configure the host's HTTPS domain and Android-device access with your infrastructure administrator before using operational data. If the Windows desktop client will connect to that hosted API, configure `BUS_FORECAST_CORS_ORIGINS` on the API for the desktop origins `http://127.0.0.1:8765` and `http://localhost:8765`. The hosted mode's shared bearer key is a prototype access gate, not company SSO or role-based authorization. Use only approved infrastructure and data until authentication, retention, backups, access controls, privacy review, and operational sign-off are complete.
 
-## Controlled company pilot
+## Current stage: prototype
 
-The separate [company pilot runbook](COMPANY_PILOT.md) defines data, access, forecast-acceptance, shadow-operation, backup/restore, and rollback gates. A separate [paid Render pilot blueprint](render.company.yaml) provides persistent storage at `/var/lib/bus-forecast`; it does not change the free demo configuration. Creating the pilot service incurs hosting charges. Review current pricing, company approval, and the runbook before creating it.
+Use the live synthetic demo to show the dashboard, forecasts, route scenarios, and exports and to gather feedback. It is designed for evaluation with generated sample counts; company data and a paid hosting upgrade are not part of this phase.
+
+## Later phase: company pilot (after approval)
+
+The separate [company pilot runbook](COMPANY_PILOT.md) defines data, access, forecast-acceptance, shadow-operation, backup/restore, and rollback gates. A separate [paid Render pilot blueprint](render.company.yaml) provides persistent storage at `/var/lib/bus-forecast`; it does not change the free demo configuration. This is a later phase. The pilot blueprint is optional and incurs hosting charges if created; do not create it during prototype review. Revisit the runbook only after your organization approves a company-data pilot.
 
 The pilot blueprint is still a single-instance deployment with a shared bearer-key gate. It does not provide SSO, user roles, high availability, or an automated backup/restore service. Do not load company data until the company approves the access model and hosting environment and the pilot gates are signed off. Persistent storage alone is not a backup or enterprise security control.
 
