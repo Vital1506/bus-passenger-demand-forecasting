@@ -51,6 +51,8 @@ FORECAST_PATH = DATA_DIR / "forecast.csv"
 META_PATH = DATA_DIR / "data_source.json"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PIPELINE_LOCK = threading.Lock()
+PUBLIC_DEMO_LOCK = threading.Lock()
+PUBLIC_DEMO_CACHE: dict | None = None
 
 WEB_DIR = project_path("web")
 WEB_DIR.mkdir(parents=True, exist_ok=True)
@@ -200,6 +202,71 @@ def health() -> dict:
 @app.get("/api/status", dependencies=[Depends(authorize)])
 def get_status() -> dict:
     return status_payload()
+
+
+@app.get("/api/public-demo/status")
+def public_demo_status() -> dict:
+    """Return a cached, read-only synthetic forecast without touching operator data."""
+    global PUBLIC_DEMO_CACHE
+    if PUBLIC_DEMO_CACHE is not None:
+        return PUBLIC_DEMO_CACHE
+    with PUBLIC_DEMO_LOCK:
+        if PUBLIC_DEMO_CACHE is not None:
+            return PUBLIC_DEMO_CACHE
+        sample = project_path("data/sample_daily_ridership.csv")
+        if not sample.exists():
+            raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
+        demo_dir = Path(tempfile.mkdtemp(prefix="bus-forecast-public-demo-"))
+        model_path = demo_dir / "model.joblib"
+        metrics_path = demo_dir / "metrics.json"
+        predictions_path = demo_dir / "predictions.csv"
+        try:
+            training = train_project(
+                data_path=sample,
+                model_out=model_path,
+                horizon=7,
+                folds=4,
+                metrics_out=metrics_path,
+                predictions_out=predictions_path,
+            )
+            data = load_data(str(sample))
+            forecasts = build_forecast(sample, model_path, 7, "error")
+            PUBLIC_DEMO_CACHE = {
+                "data_loaded": True,
+                "source": "synthetic demo data",
+                "rows": int(len(data)),
+                "route_count": int(data["route_id"].nunique()),
+                "latest_observed_date": data["service_date"].max().date().isoformat(),
+                "model_trained": True,
+                "trained_through": training["trained_through"],
+                "horizon_days": 7,
+                "metrics": json.loads(metrics_path.read_text(encoding="utf-8")),
+                "forecasts": forecasts.to_dict(orient="records"),
+                "forecast_updated_at": training["created_at_utc"],
+                "public_demo": True,
+            }
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail="Could not build the synthetic public preview") from exc
+    return PUBLIC_DEMO_CACHE
+
+
+@app.get("/api/public-demo/forecast.csv")
+def public_demo_forecast_csv() -> Response:
+    payload = public_demo_status()
+    forecast = pd.DataFrame(payload["forecasts"])
+    return Response(
+        content=forecast.to_csv(index=False),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="bus_demand_synthetic_demo_forecast.csv"'},
+    )
+
+
+@app.get("/api/public-demo/sample.csv")
+def public_demo_sample_csv() -> Response:
+    sample = project_path("data/sample_daily_ridership.csv")
+    if not sample.exists():
+        raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
+    return FileResponse(sample, media_type="text/csv", filename="synthetic_daily_route_counts.csv")
 
 
 @app.post("/api/data/upload", dependencies=[Depends(authorize), Depends(protect_pipeline)])
