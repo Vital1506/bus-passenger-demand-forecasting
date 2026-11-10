@@ -8,11 +8,28 @@ An operationally oriented Python baseline for **daily passenger boardings per ro
 
 This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
 
-## Reproducible model training
+## Reproducible model training and evaluation
 
-A dedicated [Train forecasting model workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/train-model.yml) runs on relevant source/data changes and can also be started manually from GitHub Actions. It trains the model, evaluates four expanding-window folds at a seven-day horizon, compares results with the seasonal-naive baseline, and uploads the fitted model, metrics, and out-of-fold predictions as a downloadable artifact (retained for 30 days).
+The [Train forecasting model workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/train-model.yml) runs on relevant source changes and can also be started manually from GitHub Actions. Choose **MTA** for a public historical dataset (default route: M15) or **sample** for the clearly labeled synthetic demo. Each run saves the trained model, data/source metadata, validation metrics, forecast-error analysis, and predictions as a downloadable artifact retained for 30 days.
 
-The latest training run ([run #1](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/runs/42828632328)) completed successfully on the synthetic demo dataset. Its aggregate backtest WAPE was **11.21% for the ML model** and **14.19% for seasonal naive** (MAE 48.62 vs. 61.58 passengers; RMSE 60.98 vs. 87.56). The model also beat the baseline on R10 and R35, while R22 was close (11.60% vs. 11.98% WAPE). These figures are reproducibility evidence for the generated sample only; they are not company validation or a guarantee of future accuracy. Download the **bus-demand-model-and-backtest** artifact from the run to inspect the model bundle, metrics, and fold-level predictions.
+### Public MTA data
+
+The workflow uses the official [MTA Bus Hourly Ridership: 2020–2024 dataset](https://data.ny.gov/Transportation/MTA-Bus-Hourly-Ridership-2020-2024/kv7t-n8in). The downloader [src/fetch_mta_daily.py](src/fetch_mta_daily.py) sums hourly estimates across fare/payment categories by route and local calendar date. The source covers historical records from 2022 through 2024 and is not a live feed. The default portfolio run selects one route, M15; other MTA route IDs can be entered when manually starting the workflow.
+
+Dates with no published route rows are explicitly zero-filled for this experiment to represent zero recorded boardings. That can also coincide with a day without service, so verify against a service calendar before interpreting the values operationally. The source does not provide evidence for how this prototype would perform on another operator, route, or future period.
+
+Run the same fetch and train flow locally:
+
+```powershell
+python -m src.fetch_mta_daily --routes M15 --output artifacts/mta_daily_ridership.csv
+python -m src.train --data artifacts/mta_daily_ridership.csv --missing-days zero --horizon 7 --folds 4 --holdout-days 28
+```
+
+### Time-based validation and error review
+
+The workflow uses four expanding-window model-selection folds of seven days each, followed by a final 28-day walk-forward holdout. It scores the holdout in four successive seven-day blocks; actual counts from a block are added to training history only after that block is forecast. The report compares the ML model with a seasonal-naive benchmark and breaks down WAPE by route and forecast lead day. It also lists the five largest holdout errors for review. The downloadable artifact contains both the model-selection predictions and the final holdout predictions, so the results can be independently inspected.
+
+The earlier [synthetic demonstration run](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/runs/42828632328) measured 11.21% model WAPE versus 14.19% for seasonal naive. Those results describe only generated sample data. Do not present them as MTA, company, or real-world model performance. Check the latest workflow report for results on the selected public MTA route.
 
 ## Operator workspace
 
@@ -43,7 +60,7 @@ python -m pip install -r requirements-desktop.txt
 python desktop_launcher.py
 ```
 
-In the dashboard, select **Try the synthetic demo** for a complete walkthrough or upload a CSV with `service_date`, `route_id`, and `passengers`. The demo data is synthetic and its scores are not evidence of company model performance. New uploads are checked for invalid rows and missing route dates. After data arrives, an existing model refreshes the forecast; otherwise choose **Train / retrain model**. The first training run requires at least 90 continuous service dates per route for the default four-fold, seven-day backtest. The Routes page also lets an operator save planned trips per day and a target boardings-per-trip threshold in that browser. Its peak-day average is a review signal only; it does not estimate seat occupancy or passenger loads by time of day. It now shows arithmetic trips-at-target scenarios for the point forecast and upper approximate range, and exports route/day forecasts plus browser-local assumptions to CSV. These scenarios divide daily estimates evenly across trips; they are not timetable, vehicle-capacity, occupancy, or peak-load recommendations.
+In the dashboard, select **Try the synthetic demo** for a complete walkthrough or upload a CSV with `service_date`, `route_id`, and `passengers`. The demo data is synthetic and its scores are not evidence of company model performance. New uploads are checked for invalid rows and missing route dates. After data arrives, an existing model refreshes the forecast; otherwise choose **Train / retrain model**. For the default four-fold, seven-day model-selection backtest plus 28-day holdout, training requires at least 118 continuous calendar dates per route. The Routes page also lets an operator save planned trips per day and a target boardings-per-trip threshold in that browser. Its peak-day average is a review signal only; it does not estimate seat occupancy or passenger loads by time of day. It now shows arithmetic trips-at-target scenarios for the point forecast and upper approximate range, and exports route/day forecasts plus browser-local assumptions to CSV. These scenarios divide daily estimates evenly across trips; they are not timetable, vehicle-capacity, occupancy, or peak-load recommendations.
 
 ### Ingest from a scheduled daily export
 
@@ -109,7 +126,7 @@ The pilot blueprint is still a single-instance deployment with a shared bearer-k
 - Default forecast horizon: 7 days.
 - Inputs: recent demand lags, trailing means/variation, day-of-week, weekend, month, and annual seasonality.
 - Model: scikit-learn histogram gradient boosting with one-hot route encoding.
-- Backtest: expanding-window, rolling-origin evaluation at the same multi-day horizon used for forecasting (4 folds × 7 days by default).
+- Model-selection backtest: expanding-window, rolling-origin evaluation at the same multi-day horizon used for forecasting (4 folds × 7 days by default), followed by a separate 28-day walk-forward holdout in the training workflow.
 - Comparator: seasonal naive, repeating each route's count from the same weekday one week earlier.
 - Metrics: MAE, RMSE, and WAPE overall and by route.
 - Forecast ranges: route-specific 90th-percentile absolute out-of-fold error, displayed as a symmetric approximate band. This is not a formally calibrated prediction interval.
