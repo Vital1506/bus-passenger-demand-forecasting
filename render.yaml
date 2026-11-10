@@ -5,7 +5,8 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
-    autoDeploy: true
+    branch: main
+    autoDeployTrigger: commit
     envVars:
       - key: BUS_FORECAST_REQUIRE_AUTH
         value: "true"
