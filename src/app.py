@@ -47,6 +47,7 @@ DATA_PATH = DATA_DIR / "daily_ridership.csv"
 MODEL_PATH = ARTIFACT_DIR / "model.joblib"
 METRICS_PATH = ARTIFACT_DIR / "backtest_metrics.json"
 PREDICTIONS_PATH = ARTIFACT_DIR / "backtest_predictions.csv"
+HOLDOUT_PREDICTIONS_PATH = ARTIFACT_DIR / "holdout_predictions.csv"
 FORECAST_PATH = DATA_DIR / "forecast.csv"
 META_PATH = DATA_DIR / "data_source.json"
 AUDIT_PATH = DATA_DIR / "ingest_audit.jsonl"
@@ -466,6 +467,7 @@ def train_model(request: TrainRequest) -> dict:
             missing_days=request.missing_days,
             metrics_out=METRICS_PATH,
             predictions_out=PREDICTIONS_PATH,
+            holdout_predictions_out=HOLDOUT_PREDICTIONS_PATH,
         )
         save_forecast(request.horizon, request.missing_days)
         trained_data = load_data(str(DATA_PATH))
