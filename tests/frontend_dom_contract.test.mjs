@@ -15,3 +15,13 @@ test("every statically referenced UI element exists in the app shell", () => {
   assert.deepEqual(missingIds, [], `UI selectors without matching HTML elements: ${missingIds.join(", ")}`);
 });
 
+test("origin and destination pickers expose accessible searchable listboxes", () => {
+  for (const [inputId, listId] of [["countOrigin", "originSuggestions"], ["countDestination", "destinationSuggestions"]]) {
+    assert.match(html, new RegExp(`id="${inputId}"[^>]*role="combobox"`));
+    assert.match(html, new RegExp(`id="${listId}"[^>]*role="listbox"`));
+    assert.match(html, new RegExp(`aria-controls="${listId}"`));
+  }
+  assert.match(app, /ArrowDown/);
+  assert.match(app, /aria-activedescendant/);
+});
+
