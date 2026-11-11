@@ -13,6 +13,46 @@ export function matchDestinations(origin, catalog) {
   return canonicalOrigin ? [...catalog.origins[canonicalOrigin]] : [];
 }
 
+const placeIndexCache = new WeakMap();
+
+function placeIndex(catalog) {
+  if (!catalog || typeof catalog !== "object") return { usage: new Map(), places: [] };
+  const cached = placeIndexCache.get(catalog);
+  if (cached) return cached;
+  const origins = Object.keys(catalog.origins || {});
+  const usage = new Map();
+  for (const origin of origins) {
+    usage.set(origin, (usage.get(origin) || 0) + 1);
+    for (const destination of catalog.origins[origin] || []) {
+      usage.set(destination, (usage.get(destination) || 0) + 1);
+    }
+  }
+  const index = { usage, places: [...usage.keys()] };
+  placeIndexCache.set(catalog, index);
+  return index;
+}
+
+export function placeSuggestions(query, catalog, preferred = [], limit = 10) {
+  const { usage, places } = placeIndex(catalog);
+  const preferredKeys = new Set(preferred.map((value) => normalizePlaceLabel(value).toLocaleLowerCase("en-IN")));
+  const normalizedQuery = normalizePlaceLabel(query).toLocaleLowerCase("en-IN");
+  return places
+    .filter((place) => !normalizedQuery || normalizePlaceLabel(place).toLocaleLowerCase("en-IN").includes(normalizedQuery))
+    .sort((left, right) => {
+      const leftKey = normalizePlaceLabel(left).toLocaleLowerCase("en-IN");
+      const rightKey = normalizePlaceLabel(right).toLocaleLowerCase("en-IN");
+      const leftPrefix = normalizedQuery && leftKey.startsWith(normalizedQuery) ? 0 : 1;
+      const rightPrefix = normalizedQuery && rightKey.startsWith(normalizedQuery) ? 0 : 1;
+      if (leftPrefix !== rightPrefix) return leftPrefix - rightPrefix;
+      const leftPreferred = preferredKeys.has(leftKey) ? 0 : 1;
+      const rightPreferred = preferredKeys.has(rightKey) ? 0 : 1;
+      if (leftPreferred !== rightPreferred) return leftPreferred - rightPreferred;
+      if (!normalizedQuery && usage.get(left) !== usage.get(right)) return usage.get(right) - usage.get(left);
+      return left.localeCompare(right, "en-IN");
+    })
+    .slice(0, Math.max(0, limit));
+}
+
 export function canonicalRoute(origin, destination, catalog) {
   const cleanedOrigin = normalizePlaceLabel(origin);
   const cleanedDestination = normalizePlaceLabel(destination);
