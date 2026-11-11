@@ -1,4 +1,4 @@
-import { canonicalRoute, matchDestinations, normalizePlaceLabel } from "./route_catalog.mjs";
+import { canonicalRoute, matchDestinations, normalizePlaceLabel, placeSuggestions } from "./route_catalog.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null };
@@ -157,39 +157,46 @@ const PAGE_INFO = {
   model: ["How it works", "A plain-language guide to the data and forecast."]
 };
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
-function fillDatalist(list, values) {
-  if (!list) return;
-  list.replaceChildren(...values.map((value) => {
-    const option = document.createElement("option");
-    option.value = value;
+function renderPlaceSuggestions(input, list, values, preferred = []) {
+  if (!input || !list) return;
+  const open = document.activeElement === input;
+  const normalized = normalizePlaceLabel(input.value).toLocaleLowerCase("en-IN");
+  const matching = values.filter((value) => normalizePlaceLabel(value).toLocaleLowerCase("en-IN") !== normalized);
+  const preferredKeys = new Set(preferred.map((value) => normalizePlaceLabel(value).toLocaleLowerCase("en-IN")));
+  list.replaceChildren(...matching.map((value, index) => {
+    const option = document.createElement("div");
+    option.id = `${list.id}-option-${index}`;
+    option.className = "place-suggestion";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", "false");
+    option.dataset.value = value;
+    const name = document.createElement("span");
+    name.className = "place-suggestion-name";
+    name.textContent = value;
+    const kind = document.createElement("small");
+    kind.textContent = preferredKeys.has(normalizePlaceLabel(value).toLocaleLowerCase("en-IN")) ? "Listed for this route" : "Place in route catalogue";
+    option.append(name, kind);
     return option;
   }));
-}
-function suggestedValues(values, query, limit = 50) {
-  const normalizedQuery = normalizePlaceLabel(query).toLocaleLowerCase("en-IN");
-  if (!normalizedQuery) return values.slice(0, limit);
-  const startsWith = [], contains = [];
-  for (const value of values) {
-    const normalizedValue = normalizePlaceLabel(value).toLocaleLowerCase("en-IN");
-    if (normalizedValue.startsWith(normalizedQuery)) startsWith.push(value);
-    else if (normalizedValue.includes(normalizedQuery)) contains.push(value);
-  }
-  return [...startsWith, ...contains].slice(0, limit);
+  const show = open && matching.length > 0;
+  list.hidden = !show;
+  input.setAttribute("aria-expanded", String(show));
+  if (!show) input.removeAttribute("aria-activedescendant");
 }
 function updateRouteSuggestions() {
   const originInput = $("#countOrigin"), destinationInput = $("#countDestination");
   const originList = $("#originSuggestions"), destinationList = $("#destinationSuggestions");
   const hint = $("#routeCatalogHint");
   if (!originInput || !destinationInput || !originList || !destinationList || !hint) return;
-  const catalogOrigins = Object.keys(state.routeCatalog?.origins || {}).sort((a, b) => a.localeCompare(b, "en-IN"));
-  fillDatalist(originList, suggestedValues(catalogOrigins, originInput.value));
+  const catalogOrigins = Object.keys(state.routeCatalog?.origins || {});
   const origin = normalizePlaceLabel(originInput.value);
   const destinations = matchDestinations(origin, state.routeCatalog);
-  fillDatalist(destinationList, suggestedValues(destinations, destinationInput.value, 80));
+  renderPlaceSuggestions(originInput, originList, placeSuggestions(originInput.value, state.routeCatalog));
+  renderPlaceSuggestions(destinationInput, destinationList, placeSuggestions(destinationInput.value, state.routeCatalog, destinations), destinations);
   if (!state.routeCatalog) {
-    hint.textContent = "Route suggestions are unavailable right now. You can still type your own route labels; they are not checked against a map.";
+    hint.textContent = "Place suggestions are unavailable right now. You can still type a starting point and destination; custom places are not map-verified.";
   } else if (!origin) {
-    hint.textContent = `Choose a starting city to see matching destinations from the supplied route catalogue (${catalogOrigins.length.toLocaleString()} starting cities).`;
+    hint.textContent = `Search ${catalogOrigins.length.toLocaleString()} starting cities and all listed destinations. Choose a start to rank its listed routes first.`;
   } else if (!destinations.length) {
     hint.textContent = `No catalogue routes start at “${origin}”. You can still enter a custom place label; it will not be map-verified.`;
   } else {
@@ -198,6 +205,63 @@ function updateRouteSuggestions() {
       ? `Listed route: ${canonicalRoute(origin, destinationInput.value, state.routeCatalog).routeId}. Catalogue entries are suggestions, not live service confirmation.`
       : `${destinations.length.toLocaleString()} listed destinations from ${origin}. Start typing to narrow the list, or enter a custom destination.`;
   }
+}
+function wirePlacePicker(input, list, update) {
+  if (!input || !list) return;
+  let activeIndex = -1;
+  const options = () => [...list.querySelectorAll('[role="option"]')];
+  const close = () => {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+    activeIndex = -1;
+  };
+  const activate = (index) => {
+    const items = options();
+    if (!items.length) return;
+    activeIndex = (index + items.length) % items.length;
+    items.forEach((item, position) => item.setAttribute("aria-selected", String(position === activeIndex)));
+    input.setAttribute("aria-activedescendant", items[activeIndex].id);
+    items[activeIndex].scrollIntoView({ block: "nearest" });
+  };
+  const choose = (option) => {
+    if (!option) return;
+    input.value = option.dataset.value;
+    update();
+    close();
+    input.focus();
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  input.addEventListener("focus", () => { update(); });
+  input.addEventListener("blur", () => window.setTimeout(() => {
+    if (!input.closest(`#${input.id}-picker`)?.contains(document.activeElement)) close();
+  }, 120));
+  input.addEventListener("input", () => { activeIndex = -1; update(); });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const items = options();
+      if (!items.length) { update(); return; }
+      event.preventDefault();
+      activate(activeIndex + (event.key === "ArrowDown" ? 1 : -1));
+    } else if (event.key === "Enter" && !list.hidden && activeIndex >= 0) {
+      event.preventDefault();
+      choose(options()[activeIndex]);
+    } else if (event.key === "Escape" && !list.hidden) {
+      event.preventDefault();
+      close();
+    }
+  });
+  list.addEventListener("mousedown", (event) => {
+    if (event.target.closest('[role="option"]')) event.preventDefault();
+  });
+  list.addEventListener("click", (event) => {
+    const option = event.target.closest('[role="option"]');
+    if (!option) return;
+    choose(option);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest(`#${input.id}-picker`)) close();
+  });
 }
 async function loadRouteCatalog() {
   try {
@@ -521,8 +585,8 @@ function setup() {
   const countDate = $("#countDate");
   const originInput = $("#countOrigin"), destinationInput = $("#countDestination");
   if (originInput && destinationInput) {
-    originInput.addEventListener("input", updateRouteSuggestions);
-    destinationInput.addEventListener("input", updateRouteSuggestions);
+    wirePlacePicker(originInput, $("#originSuggestions"), updateRouteSuggestions);
+    wirePlacePicker(destinationInput, $("#destinationSuggestions"), updateRouteSuggestions);
     void loadRouteCatalog();
   }
   if (countDate) {
