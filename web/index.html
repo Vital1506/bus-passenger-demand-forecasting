@@ -115,16 +115,14 @@
             <div id="operatorControls">
               <p class="guide-intro">Enter the number of passengers who boarded on a route for one day. Add counts as you collect them; you do not need to prepare a file.</p>
               <form id="quickCountForm" class="quick-count-form">
-                <label>Starting point<input id="countOrigin" name="origin" list="originSuggestions" required maxlength="60" autocomplete="off" placeholder="Type or choose a starting city" /></label>
-                <datalist id="originSuggestions"></datalist>
-                <label>Destination<input id="countDestination" name="destination" list="destinationSuggestions" required maxlength="60" autocomplete="off" placeholder="Choose a destination for this start" /></label>
-                <datalist id="destinationSuggestions"></datalist>
+                <div class="place-picker" id="countOrigin-picker"><label for="countOrigin">Starting point</label><input id="countOrigin" name="origin" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="originSuggestions" aria-expanded="false" required maxlength="60" autocomplete="off" placeholder="Type or choose a starting city" /><div id="originSuggestions" class="place-suggestions" role="listbox" aria-label="Starting point suggestions" hidden></div></div>
+                <div class="place-picker" id="countDestination-picker"><label for="countDestination">Destination</label><input id="countDestination" name="destination" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="destinationSuggestions" aria-expanded="false" required maxlength="60" autocomplete="off" placeholder="Type or choose a destination" /><div id="destinationSuggestions" class="place-suggestions" role="listbox" aria-label="Destination suggestions" hidden></div></div>
                 <label>Service date<input id="countDate" name="service_date" type="date" required /></label>
                 <label>Total boardings that day<input id="countPassengers" name="passengers" type="number" min="0" max="1000000" step="1" required placeholder="e.g. 240" /></label>
                 <button id="saveCountButton" class="button button-primary" type="submit">Save this daily count <span>→</span></button>
               </form>
               <p id="routeCatalogHint" class="route-catalog-hint" role="status" aria-live="polite">Loading route suggestions…</p>
-              <p class="count-hint">The route catalogue is based on the supplied Pan-India bus routes file. Suggestions are reference city pairs only; they do not verify stops or current service. You can enter a custom route. Only save passenger counts you observed or can verify.</p>
+              <p class="count-hint">Search places in either field. After you choose a starting point, matching listed routes appear first in destination suggestions. The supplied catalogue is a reference only; it does not verify stops or current service. Custom places are allowed. Only save passenger counts you observed or can verify.</p>
               <div class="flow-controls missing-policy"><label for="missingDays">If a date has no count</label><select id="missingDays"><option value="error">Stop and ask me (recommended)</option><option value="zero">Use zero only if there was no service</option></select></div>
               <details class="advanced-data"><summary>Have a file instead? Import daily counts</summary>
                 <label id="dropzone" class="dropzone" for="csvFile"><span class="upload-mark">↑</span><span><strong>Choose a CSV file</strong><small>Columns: date, route, passengers · up to 20 MB</small></span><input id="csvFile" type="file" accept=".csv,text/csv" /></label>
