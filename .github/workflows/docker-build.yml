@@ -1,0 +1,28 @@
+name: Docker build
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    name: Build Dockerfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Docker version
+        run: docker --version
+
+      - name: Build image (no push, no deploy)
+        run: docker build --progress=plain --tag bus-demand-forecast:ci .
+
+      - name: Report image size
+        if: success()
+        run: docker image inspect bus-demand-forecast:ci --format 'Built image {{.Id}} ({{.Size}} bytes)'

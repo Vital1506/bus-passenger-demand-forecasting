@@ -70,6 +70,7 @@
         <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Start here</button>
         <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Forecasts</button>
         <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
+        <button type="button" data-view="explorer"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m19 19-3.8-3.8"/></svg></span> Explorer</button>
         <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> My data</button>
         <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> How it works</button>
         <span class="nav-status"><i></i><span>API checks every minute</span></span>
@@ -160,6 +161,59 @@
           <div class="route-table-tools"><button id="exportRoutePlan" class="button button-primary" type="button">Export planning CSV ↓</button><button id="resetRoutePlans" class="button button-quiet" type="button">Clear route assumptions</button></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th>PEAK FORECAST DAY</th><th class="numeric">BOARDINGS (POINT / HIGH)</th><th class="numeric">PLANNED TRIPS / DAY</th><th class="numeric">TARGET / TRIP</th><th class="numeric">AVG / TRIP (POINT / HIGH)</th><th class="numeric">TRIPS AT TARGET (POINT / HIGH)</th><th>REVIEW SIGNAL</th></tr></thead><tbody id="routeRows"><tr class="empty-row"><td colspan="7">Route summaries will appear with forecasts.</td></tr></tbody></table></div>
         </section>
+        <section class="page-panel panel monthly-explorer" data-pages="explorer" id="explorerPage">
+          <div class="panel-heading">
+            <div><p class="eyebrow">CHICAGO CTA · MONTHLY BUS BOARDINGS</p><h2>Smart Route Explorer</h2></div>
+            <span class="horizon-badge" id="monthlyExplorerBadge">Loading routes…</span>
+          </div>
+          <p class="page-lead">Search Chicago Transit Authority bus routes by number or name and review observed monthly boardings from January 2001 to August 2026. Boardings are monthly farebox counts, not unique passengers. This is historical data, not live tracking or current service availability.</p>
+          <form class="explorer-search" id="monthlySearchForm" role="search">
+            <label class="sr-only" for="monthlyRouteSearch">Search CTA route number or name</label>
+            <input id="monthlyRouteSearch" type="search" placeholder="Search route number or name (e.g. 79 or Ashland)" autocomplete="off" maxlength="80" aria-controls="monthlyRouteResults" aria-describedby="monthlySearchHint" />
+            <button id="monthlyRouteClear" class="button button-quiet" type="button">Clear</button>
+          </form>
+          <p id="monthlySearchHint" class="explorer-hint" role="status" aria-live="polite">Loading the CTA monthly route index…</p>
+
+          <div id="monthlyExplorerLoading" class="explorer-loading" role="status" aria-live="polite"><span class="explorer-spinner" aria-hidden="true"></span> Loading observed monthly records…</div>
+          <div id="monthlyExplorerError" class="explorer-message error hidden" role="alert"></div>
+          <div id="monthlyExploreEmpty" class="explorer-message hidden">No monthly CTA data has been imported into this server yet.</div>
+
+          <div id="monthlyExplorerBody" class="explorer-grid hidden">
+            <aside class="explorer-results" aria-labelledby="monthlyResultsTitle">
+              <h3 id="monthlyResultsTitle">Matching routes</h3>
+              <p id="monthlyResultsEmpty" class="explorer-message hidden">No routes match that search. Try a route number such as 79 or a name such as Ashland.</p>
+              <ul id="monthlyRouteResults" class="explorer-route-list" role="listbox" aria-label="Matching CTA routes"></ul>
+            </aside>
+            <div class="explorer-detail">
+              <div id="monthlyDetailEmpty" class="explorer-message">Choose a route to view its observed monthly boardings.</div>
+              <div id="monthlyDetail" class="hidden">
+                <div class="summary-cards explorer-summary">
+                  <article><small>Latest observed month</small><strong id="monthlyLatestMonth">—</strong></article>
+                  <article><small>Boardings that month</small><strong id="monthlyLatest">—</strong></article>
+                  <article><small>Observed months</small><strong id="monthlyObserved">—</strong></article>
+                  <article><small>Name changes</small><strong id="monthlyNameChanges">—</strong></article>
+                </div>
+                <div class="explorer-route-head"><span class="route-pill" id="monthlyRoutePill">—</span><strong id="monthlyRouteName">—</strong><span id="monthlySpan" class="explorer-span">—</span></div>
+                <div id="monthlyChartWrap" class="explorer-chart-wrap">
+                  <div id="monthlyChartEmpty" class="explorer-message hidden">No observed records for this route.</div>
+                  <svg id="monthlyChart" class="explorer-chart" role="img" aria-label="Observed monthly boardings by month"></svg>
+                </div>
+                <p class="chart-legend explorer-legend"><span><i class="legend-line"></i>Observed monthly boardings</span><span>Breaks = months the source does not report</span></p>
+                <p id="monthlyGaps" class="explorer-gaps">—</p>
+                <section class="explorer-names" aria-labelledby="monthlyNamesTitle"><h3 id="monthlyNamesTitle">Route name history</h3><ul id="monthlyNameHistory"></ul></section>
+                <section class="explorer-table" aria-labelledby="monthlyTableTitle">
+                  <h3 id="monthlyTableTitle">Observed monthly records</h3>
+                  <p id="monthlyTableCount" class="table-footnote">—</p>
+                  <div class="table-scroll"><table><thead><tr><th>MONTH</th><th>ROUTE NAME AT THE TIME</th><th class="numeric">BOARDINGS</th></tr></thead><tbody id="monthlyTableRows"></tbody></table></div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div class="explorer-source">
+            <p><strong>Source:</strong> Chicago Transit Authority, “CTA – Ridership: Bus Routes – Monthly Day-Type Averages &amp; Totals”, City of Chicago Data Portal dataset bynn-gwxy. Data provided by Chicago Transit Authority. This educational, non-commercial view implies no CTA or City of Chicago endorsement and is not real-time tracking.</p>
+            <p class="explorer-disclaimer">This site provides applications using data that has been modified for use from its original source, www.cityofchicago.org, the official website of the City of Chicago. The City of Chicago makes no claims as to the content, accuracy, timeliness, or completeness of any of the data provided at this site. The data provided at this site is subject to change at any time. It is understood that the data provided at this site is being used at one’s own risk.</p>
+          </div>
+        </section>
         <section class="page-panel panel" data-pages="data" id="dataPage">
           <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
           <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
@@ -187,9 +241,9 @@ Content-Type: application/json
           <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>
         </section>
-        <section class="bottom-strip" data-pages="overview forecasts routes data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
+        <section class="bottom-strip" data-pages="overview forecasts routes explorer data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
       </main>
-      <footer data-pages="overview forecasts routes data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
+      <footer data-pages="overview forecasts routes explorer data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
