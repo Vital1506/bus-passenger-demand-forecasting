@@ -1,7 +1,8 @@
 import { canonicalRoute, matchDestinations, normalizePlaceLabel, placeSuggestions } from "./route_catalog.mjs";
+import { buildMonthlySeries, chartModel, describeError, escapeHtml, formatNumber, missingMonthRanges, monthLabel, normalizeHistoryPayload, normalizeRoutesPayload, searchRoutes, summarizeRoute } from "./monthly_explorer.mjs";
 
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null };
+const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null, monthly: { loaded: false, loading: false, routes: [], selected: "", history: new Map(), query: "" } };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
@@ -154,7 +155,8 @@ const PAGE_INFO = {
   forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
   routes: ["Routes", "Compare forecast totals and validation scores by route."],
   data: ["My data", "See which passenger counts are saved and when they were updated."],
-  model: ["How it works", "A plain-language guide to the data and forecast."]
+  model: ["How it works", "A plain-language guide to the data and forecast."],
+  explorer: ["Smart Route Explorer", "Search Chicago CTA bus routes and review their observed monthly boardings."]
 };
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function renderPlaceSuggestions(input, list, values, preferred = []) {
@@ -326,6 +328,7 @@ function navigate(view, updateHash = true) {
   $("#pageSummary").textContent = PAGE_INFO[view][1];
   if (updateHash && location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   if (view === "forecasts" && state.data) renderChart(state.data.forecasts);
+  if (view === "explorer") void loadMonthlyDataset();
 }
 function readRoutePlans() {
   try {
@@ -538,6 +541,186 @@ async function train(options = {}) {
   const folds = Number(options.folds || 4);
   return api("/api/train", { method: "POST", body: JSON.stringify({ horizon, folds, missing_days: $("#missingDays").value }) });
 }
+/* ------------------------------------------------------------------ *
+ * Smart Route Explorer — observed Chicago CTA monthly boardings
+ * Public read-only endpoints only; no operator key is used here.
+ * ------------------------------------------------------------------ */
+const MONTHLY_ENDPOINTS = {
+  routes: "/api/public/monthly-data/routes",
+  history: (routeId) => `/api/public/monthly-data/routes/${encodeURIComponent(routeId)}/history`,
+};
+
+async function publicJson(path) {
+  let response;
+  try {
+    response = await fetch(`${apiBase()}${path}`, { cache: "no-store", headers: { Accept: "application/json" } });
+  } catch (error) {
+    throw Object.assign(new Error("Failed to fetch"), { status: 0 });
+  }
+  const type = response.headers.get("content-type") || "";
+  const payload = type.includes("json") ? await response.json().catch(() => null) : null;
+  if (!response.ok) {
+    throw Object.assign(new Error(payload?.detail || `Request failed (${response.status})`), { status: response.status });
+  }
+  return payload;
+}
+
+function monthlyBadge(text) { const node = $("#monthlyExplorerBadge"); if (node) node.textContent = text; }
+function monthlyShow(target) {
+  for (const id of ["monthlyExplorerLoading", "monthlyExplorerError", "monthlyExploreEmpty", "monthlyExplorerBody"]) {
+    const node = $(`#${id}`);
+    if (node) node.classList.toggle("hidden", id !== target);
+  }
+}
+async function loadMonthlyDataset() {
+  const monthly = state.monthly;
+  if (monthly.loaded || monthly.loading) return;
+  monthly.loading = true;
+  monthlyShow("monthlyExplorerLoading");
+  monthlyBadge("Loading routes…");
+  $("#monthlySearchHint").textContent = "Loading the CTA monthly route index…";
+  try {
+    const routes = normalizeRoutesPayload(await publicJson(MONTHLY_ENDPOINTS.routes));
+    monthly.routes = routes;
+    if (!routes.length) {
+      monthlyShow("monthlyExploreEmpty");
+      monthlyBadge("No monthly data");
+      $("#monthlySearchHint").textContent = "No monthly routes are stored on this server yet.";
+      monthly.loaded = true;
+      return;
+    }
+    monthly.loaded = true;
+    const firstMonth = routes.reduce((earliest, route) => (route.first_month && (!earliest || route.first_month < earliest) ? route.first_month : earliest), null);
+    const lastMonth = routes.reduce((latest, route) => (route.last_month && route.last_month > (latest || "") ? route.last_month : latest), null);
+    monthlyBadge(`${routes.length.toLocaleString()} routes · ${monthLabel(firstMonth)} – ${monthLabel(lastMonth)}`);
+    monthlyShow("monthlyExplorerBody");
+    renderMonthlyResults();
+    const initial = searchRoutes(routes, "", 1)[0];
+    if (initial) await selectMonthlyRoute(initial.route_id);
+  } catch (error) {
+    monthlyShow("monthlyExplorerError");
+    const node = $("#monthlyExplorerError");
+    if (node) node.textContent = describeError(error, "dataset");
+    monthlyBadge("Monthly data unavailable");
+    $("#monthlySearchHint").textContent = "Monthly data could not be loaded.";
+  } finally {
+    monthly.loading = false;
+  }
+}
+function renderMonthlyResults() {
+  const monthly = state.monthly;
+  const query = $("#monthlyRouteSearch")?.value ?? "";
+  monthly.query = query;
+  const results = searchRoutes(monthly.routes, query, 60);
+  const list = $("#monthlyRouteResults");
+  list.replaceChildren(...results.map((route) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "explorer-route";
+    button.dataset.routeId = route.route_id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(route.route_id === monthly.selected));
+    const pill = document.createElement("span");
+    pill.className = "route-pill";
+    pill.textContent = route.route_id;
+    const name = document.createElement("span");
+    name.className = "explorer-route-name";
+    name.textContent = route.route_name;
+    const meta = document.createElement("small");
+    meta.textContent = `${route.month_count.toLocaleString()} months · ${formatNumber(route.total_boardings)} boardings`;
+    button.append(pill, name, meta);
+    item.append(button);
+    return item;
+  }));
+  $("#monthlyResultsEmpty").classList.toggle("hidden", results.length > 0);
+  $("#monthlySearchHint").textContent = query.trim()
+    ? `${results.length.toLocaleString()} matching route${results.length === 1 ? "" : "s"} for “${query.trim()}”.`
+    : `Showing ${results.length.toLocaleString()} of ${monthly.routes.length.toLocaleString()} CTA bus routes, busiest first. Type a route number or name to narrow the list.`;
+}
+async function selectMonthlyRoute(routeId) {
+  const monthly = state.monthly;
+  monthly.selected = routeId;
+  document.querySelectorAll("#monthlyRouteResults .explorer-route").forEach((node) => {
+    node.setAttribute("aria-selected", String(node.dataset.routeId === routeId));
+  });
+  $("#monthlyDetailEmpty").classList.add("hidden");
+  $("#monthlyDetail").classList.remove("hidden");
+  $("#monthlyRoutePill").textContent = routeId;
+  try {
+    let history = monthly.history.get(routeId);
+    if (!history) {
+      $("#monthlyRouteName").textContent = "Loading…";
+      history = normalizeHistoryPayload(await publicJson(MONTHLY_ENDPOINTS.history(routeId)));
+      if (!history) throw Object.assign(new Error("No stored monthly records"), { status: 404 });
+      monthly.history.set(routeId, history);
+    }
+    renderMonthlyHistory(history);
+  } catch (error) {
+    $("#monthlyRouteName").textContent = "Unavailable";
+    $("#monthlySpan").textContent = "—";
+    $("#monthlyChart").classList.add("hidden");
+    const empty = $("#monthlyChartEmpty");
+    empty.classList.remove("hidden");
+    empty.textContent = describeError(error, "route");
+    $("#monthlyTableRows").innerHTML = `<tr class="empty-row"><td colspan="3">${escapeHtml(describeError(error, "route"))}</td></tr>`;
+    $("#monthlyTableCount").textContent = "—";
+  }
+}
+function renderMonthlyChart(history) {
+  const svg = $("#monthlyChart");
+  const empty = $("#monthlyChartEmpty");
+  const model = chartModel(history, { width: Math.max(320, svg.parentElement?.clientWidth || 640), height: 260 });
+  if (!model.hasData) {
+    svg.classList.add("hidden");
+    svg.innerHTML = "";
+    empty.classList.remove("hidden");
+    empty.textContent = "No observed records for this route.";
+    return;
+  }
+  empty.classList.add("hidden");
+  svg.classList.remove("hidden");
+  const colour = getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#8050d8";
+  const { width, height, padding, segments, yTicks, xTicks } = model;
+  const grid = yTicks.map((tick) => `<line x1="${padding.left}" y1="${tick.y}" x2="${width - padding.right}" y2="${tick.y}" stroke="#ece4f4"/><text x="${padding.left - 9}" y="${tick.y + 3}" text-anchor="end" fill="#877c94" font-size="9" font-family="DM Mono,monospace">${escapeHtml(tick.label)}</text>`).join("");
+  const labels = xTicks.map((tick) => `<text x="${tick.x}" y="${height - 10}" text-anchor="${tick.anchor}" fill="#877c94" font-size="9" font-family="DM Mono,monospace">${escapeHtml(tick.label)}</text>`).join("");
+  const paths = segments.map((segment) => `<path d="${segment.path}" fill="none" stroke="${colour}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`).join("");
+  const dots = segments.flatMap((segment) => segment.points).map((point) => `<circle cx="${point.x}" cy="${point.y}" r="3" fill="#fff" stroke="${colour}" stroke-width="2"><title>${escapeHtml(monthLabel(point.month))} · ${escapeHtml(formatNumber(point.boardings))} boardings</title></circle>`).join("");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("aria-label", `Observed monthly boardings for route ${history.route_id}, ${monthLabel(history.first_month)} to ${monthLabel(history.last_month)}, with months the source does not report shown as gaps`);
+  svg.innerHTML = `${grid}${labels}${paths}${dots}`;
+}
+function renderMonthlyHistory(history) {
+  const summary = summarizeRoute(history);
+  if (!summary) return;
+  $("#monthlyRoutePill").textContent = summary.routeId;
+  $("#monthlyRouteName").textContent = summary.routeName;
+  $("#monthlySpan").textContent = `${monthLabel(summary.firstMonth)} – ${monthLabel(summary.lastMonth)}`;
+  $("#monthlyLatestMonth").textContent = monthLabel(summary.latestMonth);
+  $("#monthlyLatest").textContent = formatNumber(summary.latestBoardings);
+  $("#monthlyObserved").textContent = summary.observedMonths.toLocaleString();
+  $("#monthlyNameChanges").textContent = summary.nameChanges.toLocaleString();
+  renderMonthlyChart(history);
+  const gaps = missingMonthRanges(history);
+  $("#monthlyGaps").textContent = gaps.length
+    ? `Missing months shown as gaps (${summary.missingMonths.toLocaleString()}): ${gaps.map((gap) => (gap.start === gap.end ? monthLabel(gap.start) : `${monthLabel(gap.start)} – ${monthLabel(gap.end)}`)).join(", ")}.`
+    : "No missing months inside this route’s observed span.";
+  $("#monthlyNameHistory").replaceChildren(...summary.nameHistory.map((segment) => {
+    const item = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = segment.route_name;
+    const span = document.createElement("span");
+    span.textContent = segment.first_month === segment.last_month
+      ? monthLabel(segment.first_month)
+      : `${monthLabel(segment.first_month)} – ${monthLabel(segment.last_month)}`;
+    item.append(name, span);
+    return item;
+  }));
+  const rows = history.records.slice().reverse();
+  $("#monthlyTableRows").innerHTML = rows.map((record) => `<tr><td>${escapeHtml(monthLabel(record.month_start))}</td><td>${escapeHtml(record.route_name)}</td><td class="numeric passenger-count">${escapeHtml(formatNumber(record.boardings))}</td></tr>`).join("");
+  $("#monthlyTableCount").textContent = `${rows.length.toLocaleString()} observed monthly records · ${monthLabel(summary.firstMonth)} – ${monthLabel(summary.lastMonth)}. Months the source does not publish are omitted, not filled.`;
+}
+
 function setup() {
   const initialView = location.hash.slice(1);
   navigate(PAGE_INFO[initialView] ? initialView : "overview", false);
@@ -636,7 +819,25 @@ function setup() {
   ["dragenter", "dragover"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.classList.add("dragover"); }));
   ["dragleave", "drop"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.classList.remove("dragover"); }));
   drop.addEventListener("drop", (event) => { const file = event.dataTransfer.files?.[0]; if (!file) return; const input = $("#csvFile"); const transfer = new DataTransfer(); transfer.items.add(file); input.files = transfer.files; input.dispatchEvent(new Event("change", { bubbles: true })); });
-  window.addEventListener("resize", () => { if (state.data) renderChart(state.data.forecasts); });
+  const monthlySearch = $("#monthlyRouteSearch");
+  if (monthlySearch) {
+    monthlySearch.addEventListener("input", () => { if (state.monthly.loaded) renderMonthlyResults(); });
+    $("#monthlySearchForm").addEventListener("submit", (event) => { event.preventDefault(); if (state.monthly.loaded) renderMonthlyResults(); });
+    $("#monthlyRouteClear").addEventListener("click", () => {
+      monthlySearch.value = "";
+      if (state.monthly.loaded) renderMonthlyResults();
+      monthlySearch.focus();
+    });
+    $("#monthlyRouteResults").addEventListener("click", (event) => {
+      const button = event.target.closest(".explorer-route");
+      if (button && state.monthly.loaded) void selectMonthlyRoute(button.dataset.routeId);
+    });
+  }
+  window.addEventListener("resize", () => {
+    if (state.data) renderChart(state.data.forecasts);
+    const history = state.monthly.history.get(state.monthly.selected);
+    if (history && state.view === "explorer") renderMonthlyChart(history);
+  });
   window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); state.installPrompt = event; $("#installButton").classList.remove("hidden"); });
   $("#installButton").addEventListener("click", async () => { if (!state.installPrompt) return; state.installPrompt.prompt(); await state.installPrompt.userChoice; state.installPrompt = null; $("#installButton").classList.add("hidden"); });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});

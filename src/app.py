@@ -20,6 +20,18 @@ from pydantic import BaseModel, Field
 
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
+from .monthly_data import (
+    DATASET_NAME as MONTHLY_DATASET_NAME,
+    MonthlyDataError,
+    build_monthly_status,
+    get_monthly_route_history,
+    ingest_monthly_csv,
+    list_monthly_routes,
+    load_monthly_store,
+    monthly_audit_path,
+    monthly_store_path,
+    read_monthly_audit,
+)
 from .route_identity import canonicalize_manual_route_id
 from .schedule_import import schedules_to_synthetic_counts
 from .train import train_project
@@ -53,8 +65,12 @@ HOLDOUT_PREDICTIONS_PATH = ARTIFACT_DIR / "holdout_predictions.csv"
 FORECAST_PATH = DATA_DIR / "forecast.csv"
 META_PATH = DATA_DIR / "data_source.json"
 AUDIT_PATH = DATA_DIR / "ingest_audit.jsonl"
+MONTHLY_STORE_PATH = monthly_store_path(DATA_DIR)
+MONTHLY_AUDIT_PATH = monthly_audit_path(DATA_DIR)
+PUBLIC_MONTHLY_READ_ENV = "BUS_FORECAST_PUBLIC_MONTHLY_READ"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PIPELINE_LOCK = threading.Lock()
+MONTHLY_LOCK = threading.Lock()
 PUBLIC_DEMO_LOCK = threading.Lock()
 PUBLIC_DEMO_CACHE: dict | None = None
 PUBLIC_DEMO_ARTIFACTS: dict[str, Path] = {}
@@ -99,6 +115,26 @@ def protect_pipeline():
         yield
     finally:
         PIPELINE_LOCK.release()
+
+
+def protect_monthly_store():
+    """Serialize monthly uploads separately from the daily pipeline lock."""
+    if not MONTHLY_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A monthly data upload is already in progress")
+    try:
+        yield
+    finally:
+        MONTHLY_LOCK.release()
+
+
+def public_monthly_read_enabled() -> bool:
+    return os.getenv(PUBLIC_MONTHLY_READ_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def require_public_monthly_read() -> None:
+    """Hide the public monthly endpoints entirely unless explicitly enabled."""
+    if not public_monthly_read_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 class TrainRequest(BaseModel):
@@ -583,6 +619,93 @@ def download_forecast(route_id: str | None = Query(default=None, min_length=1, m
 @app.get("/api/template.csv", dependencies=[Depends(authorize)])
 def download_template() -> Response:
     return FileResponse(project_path("data/sample_daily_ridership.csv"), media_type="text/csv", filename="daily_route_counts_template.csv")
+
+
+# ---------------------------------------------------------------------------
+# Monthly passenger data (independent from the daily forecasting dataset)
+# ---------------------------------------------------------------------------
+
+def _monthly_store() -> dict:
+    try:
+        return load_monthly_store(MONTHLY_STORE_PATH)
+    except MonthlyDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _monthly_routes_payload() -> dict:
+    store = _monthly_store()
+    totals = store.get("totals") or {}
+    return {
+        "dataset": MONTHLY_DATASET_NAME,
+        "row_count": int(totals.get("rows") or 0),
+        "route_count": int(totals.get("routes") or 0),
+        "first_month": totals.get("first_month"),
+        "last_month": totals.get("last_month"),
+        "routes": list_monthly_routes(store),
+    }
+
+
+def _monthly_history_payload(route_id: str) -> dict:
+    history = get_monthly_route_history(_monthly_store(), route_id)
+    if history is None:
+        raise HTTPException(status_code=404, detail=f"No monthly data is stored for route {route_id}")
+    return history
+
+
+@app.post("/api/monthly-data/upload", dependencies=[Depends(authorize), Depends(protect_monthly_store)])
+def upload_monthly_data(file: UploadFile = File(...)) -> dict:
+    """Merge a monthly boardings CSV into the separate monthly store."""
+    if not file.filename or Path(file.filename).suffix.lower() != ".csv":
+        raise HTTPException(status_code=415, detail="Upload a CSV file")
+    contents = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="CSV upload exceeds the 20 MB limit")
+    try:
+        result = ingest_monthly_csv(
+            MONTHLY_STORE_PATH,
+            MONTHLY_AUDIT_PATH,
+            contents,
+            file_name=Path(file.filename).name,
+        )
+    except MonthlyDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "message": (
+            "Monthly boardings saved to the independent monthly store. Missing route-months stay absent: "
+            "no values were filled, zeroed, or interpolated."
+        ),
+        "import": result["import"],
+        "status": result["status"],
+    }
+
+
+@app.get("/api/monthly-data/status", dependencies=[Depends(authorize)])
+def monthly_data_status() -> dict:
+    payload = build_monthly_status(_monthly_store())
+    payload["recent_activity"] = read_monthly_audit(MONTHLY_AUDIT_PATH)
+    return payload
+
+
+@app.get("/api/monthly-data/routes", dependencies=[Depends(authorize)])
+def monthly_data_routes() -> dict:
+    return _monthly_routes_payload()
+
+
+@app.get("/api/monthly-data/routes/{route_id}/history", dependencies=[Depends(authorize)])
+def monthly_data_route_history(route_id: str) -> dict:
+    return _monthly_history_payload(route_id)
+
+
+@app.get("/api/public/monthly-data/routes", dependencies=[Depends(require_public_monthly_read)])
+def public_monthly_data_routes() -> dict:
+    """Public read-only monthly route index; disabled unless enabled by the operator."""
+    return _monthly_routes_payload()
+
+
+@app.get("/api/public/monthly-data/routes/{route_id}/history", dependencies=[Depends(require_public_monthly_read)])
+def public_monthly_data_route_history(route_id: str) -> dict:
+    """Public read-only monthly history; disabled unless enabled by the operator."""
+    return _monthly_history_payload(route_id)
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
