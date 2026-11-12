@@ -308,3 +308,161 @@ class GtfsShapePoint(Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
+
+class GtfsRealtimeFeedSource(Base, TimestampMixin):
+    """One configured GTFS-Realtime provider endpoint.
+
+    Providers are registered by operator, not invented by the platform.
+    Until a provider is configured with real credentials it stays
+    ``disabled`` and the adapter never attempts live requests.
+    """
+
+    __tablename__ = "gtfs_realtime_feed_sources"
+    __table_args__ = (
+        UniqueConstraint("agency_code", "provider_key", name="uq_gtfs_realtime_feed_sources"),
+        Index("ix_gtfs_realtime_feed_sources_agency", "agency_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agency_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    url: Mapped[str | None] = mapped_column(String(600))
+    transport: Mapped[str] = mapped_column(String(32), default="protobuf", nullable=False)
+    capabilities: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), default="disabled", nullable=False)
+    last_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(400))
+    detail: Mapped[dict | None] = mapped_column(JSON)
+
+
+class GtfsRealtimePoll(Base, TimestampMixin):
+    """One poll attempt against a provider endpoint."""
+
+    __tablename__ = "gtfs_realtime_poll_attempts"
+    __table_args__ = (
+        Index("ix_gtfs_realtime_poll_source", "feed_source_id"),
+        Index("ix_gtfs_realtime_poll_at", "polled_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    feed_source_id: Mapped[int] = mapped_column(
+        ForeignKey("gtfs_realtime_feed_sources.id", ondelete="CASCADE"), index=True
+    )
+    polled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    payload_kind: Mapped[str | None] = mapped_column(String(32))
+    bytes_received: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(String(400))
+    detail: Mapped[dict | None] = mapped_column(JSON)
+
+
+class GtfsRealtimeVehiclePosition(Base, TimestampMixin):
+    """Snapshot of one vehicle's reported position.
+
+    Rows are overwritten on each successful poll; the feed source and
+    snapshot time are the real identity, not the DB row id.
+    """
+
+    __tablename__ = "gtfs_realtime_vehicle_positions"
+    __table_args__ = (
+        UniqueConstraint("feed_source_id", "feed_snapshot_at", "vehicle_id", name="uq_gtfs_realtime_vehicle_position"),
+        Index("ix_gtfs_realtime_vehicle_source", "feed_source_id"),
+        Index("ix_gtfs_realtime_vehicle_at", "feed_snapshot_at"),
+        Index("ix_gtfs_realtime_vehicle_agency", "agency_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    feed_source_id: Mapped[int] = mapped_column(
+        ForeignKey("gtfs_realtime_feed_sources.id", ondelete="CASCADE"), index=True
+    )
+    feed_snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    agency_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    vehicle_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    trip_id: Mapped[str | None] = mapped_column(String(128))
+    route_id: Mapped[str | None] = mapped_column(String(64))
+    schedule_relationship: Mapped[int | None] = mapped_column(Integer)
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    bearing: Mapped[float | None] = mapped_column(Float)
+    speed_mps: Mapped[float | None] = mapped_column(Float)
+    position_accuracy_m: Mapped[int | None] = mapped_column(Integer)
+    timestamp: Mapped[int | None] = mapped_column(Integer)
+
+
+class GtfsRealtimeTripUpdate(Base, TimestampMixin):
+    """Snapshot of one trip's schedule deviation."""
+
+    __tablename__ = "gtfs_realtime_trip_updates"
+    __table_args__ = (
+        UniqueConstraint("feed_source_id", "feed_snapshot_at", "trip_id", name="uq_gtfs_realtime_trip_update"),
+        Index("ix_gtfs_realtime_trip_source", "feed_source_id"),
+        Index("ix_gtfs_realtime_trip_at", "feed_snapshot_at"),
+        Index("ix_gtfs_realtime_trip_agency", "agency_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    feed_source_id: Mapped[int] = mapped_column(
+        ForeignKey("gtfs_realtime_feed_sources.id", ondelete="CASCADE"), index=True
+    )
+    feed_snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    agency_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    trip_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    route_id: Mapped[str | None] = mapped_column(String(64))
+    schedule_relationship: Mapped[int | None] = mapped_column(Integer)
+    timestamp: Mapped[int | None] = mapped_column(Integer)
+    vehicle_id: Mapped[str | None] = mapped_column(String(128))
+    arrival_delay_sec: Mapped[int | None] = mapped_column(Integer)
+    departure_delay_sec: Mapped[int | None] = mapped_column(Integer)
+
+
+class GtfsRealtimeServiceAlert(Base, TimestampMixin):
+    """Snapshot of one service alert from a provider."""
+
+    __tablename__ = "gtfs_realtime_service_alerts"
+    __table_args__ = (
+        UniqueConstraint("feed_source_id", "feed_snapshot_at", "alert_id", name="uq_gtfs_realtime_service_alert"),
+        Index("ix_gtfs_realtime_alert_source", "feed_source_id"),
+        Index("ix_gtfs_realtime_alert_at", "feed_snapshot_at"),
+        Index("ix_gtfs_realtime_alert_agency", "agency_code"),
+        Index("ix_gtfs_realtime_alert_active", "active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    feed_source_id: Mapped[int] = mapped_column(
+        ForeignKey("gtfs_realtime_feed_sources.id", ondelete="CASCADE"), index=True
+    )
+    feed_snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    agency_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    alert_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    header_text: Mapped[str | None] = mapped_column(String(400))
+    description_text: Mapped[str | None] = mapped_column(String(1200))
+    url: Mapped[str | None] = mapped_column(String(600))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    timestamp: Mapped[int | None] = mapped_column(Integer)
+
+"""GTFS-realtime types deliberately reuse the same snapshot-identity pattern
+as the static GTFS tables: each poll produces one snapshot, and repeated
+snapshots overwrite earlier rows for the same (feed source, snapshot time,
+entity id). That keeps live views cache-friendly and makes staleness
+inspectable from the poll_attempts table.
+"""
+
+def is_realtime_payload_kind(raw: bytes | None) -> str | None:
+    """Best-effort classification of a raw feed payload before parsing.
+
+    Returns one of ``"vehicle_positions"``, ``"trip_updates"``,
+    ``"service_alerts"``, or ``None``. This is used only for poll
+    bookkeeping; it is not a schema validator and does not reject payloads.
+    """
+    if not raw:
+        return None
+    head = raw[:64].lower()
+    if b"vehicle" in head and b"position" in head:
+        return "vehicle_positions"
+    if b"trip" in head and b"update" in head:
+        return "trip_updates"
+    if b"alert" in head:
+        return "service_alerts"
+    return None
