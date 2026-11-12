@@ -255,7 +255,7 @@ class GtfsTrip(Base):
 class GtfsStopTime(Base):
     __tablename__ = "gtfs_stop_times"
     __table_args__ = (
-        UniqueConstraint("trip_id", "stop_sequence", name="uq_gtfs_stop_times_trip_sequence"),
+        UniqueConstraint("feed_id", "trip_id", "stop_sequence", name="uq_gtfs_stop_times_feed_trip_sequence"),
         Index("ix_gtfs_stop_times_stop", "stop_id"),
         Index("ix_gtfs_stop_times_departure", "departure_time"),
     )

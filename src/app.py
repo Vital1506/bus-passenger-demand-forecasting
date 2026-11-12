@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -71,6 +72,7 @@ PUBLIC_MONTHLY_READ_ENV = "BUS_FORECAST_PUBLIC_MONTHLY_READ"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PIPELINE_LOCK = threading.Lock()
 MONTHLY_LOCK = threading.Lock()
+GTFS_LOCK = threading.Lock()
 PUBLIC_DEMO_LOCK = threading.Lock()
 PUBLIC_DEMO_CACHE: dict | None = None
 PUBLIC_DEMO_ARTIFACTS: dict[str, Path] = {}
@@ -751,6 +753,270 @@ def storage_report() -> dict:
     from .db import storage_health
 
     return storage_health(DATA_DIR)
+
+
+# ---------------------------------------------------------------------------
+# GTFS Schedule (static transit network)
+# ---------------------------------------------------------------------------
+
+
+def protect_gtfs_import():
+    """Serialize GTFS imports separately from daily and monthly writes."""
+    if not GTFS_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A GTFS import is already in progress")
+    try:
+        yield
+    finally:
+        GTFS_LOCK.release()
+
+
+def _gtfs_session_error(exc: Exception) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="The transit database is not ready. Run the database migration and try again.",
+    )
+
+
+@app.post("/api/gtfs/upload", dependencies=[Depends(authorize), Depends(protect_gtfs_import)])
+def upload_gtfs(file: UploadFile = File(...)) -> dict:
+    """Validate and import a GTFS Schedule ZIP as a new feed version."""
+    from .db import session_scope
+    from .gtfs_static import GtfsValidationError, import_feed
+
+    if not file.filename or Path(file.filename).suffix.lower() != ".zip":
+        raise HTTPException(status_code=415, detail="Upload a .zip GTFS Schedule feed")
+    contents = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Feed exceeds the 20 MB upload limit")
+    checksum = hashlib.sha256(contents).hexdigest()
+    try:
+        with session_scope() as session:
+            summary = import_feed(session, contents, file.filename, checksum)
+    except GtfsValidationError as exc:
+        raise HTTPException(status_code=422, detail={"message": "Invalid GTFS feed", "issues": exc.issues}) from exc
+    except Exception as exc:  # database unavailable or schema missing
+        raise _gtfs_session_error(exc) from exc
+    return {
+        "message": (
+            "GTFS feed imported. The new version is now the active catalog for this agency; "
+            "previous versions are retained for history."
+        ),
+        **summary,
+        "checksum": checksum,
+    }
+
+
+@app.get("/api/gtfs/feeds", dependencies=[Depends(authorize)])
+def list_gtfs_feeds(agency: str | None = Query(default=None, max_length=64)) -> dict:
+    from sqlalchemy import select
+
+    from .db import session_scope
+    from .schema import GtfsFeed
+
+    with session_scope() as session:
+        statement = select(GtfsFeed).order_by(GtfsFeed.id.desc()).limit(50)
+        if agency:
+            statement = statement.where(GtfsFeed.agency_code == agency.strip().upper())
+        feeds = [
+            {
+                "feed_id": feed.id,
+                "agency_code": feed.agency_code,
+                "file_name": feed.file_name,
+                "checksum": feed.checksum,
+                "feed_start": str(feed.feed_start) if feed.feed_start else None,
+                "feed_end": str(feed.feed_end) if feed.feed_end else None,
+                "routes": feed.route_count,
+                "stops": feed.stop_count,
+                "trips": feed.trip_count,
+                "stop_times": feed.stop_time_count,
+                "status": feed.status,
+                "imported_at": feed.created_at.isoformat() if feed.created_at else None,
+            }
+            for feed in session.execute(statement).scalars()
+        ]
+    return {"feeds": feeds, "count": len(feeds)}
+
+
+@app.get("/api/gtfs/agencies", dependencies=[Depends(authorize)])
+def list_gtfs_agencies() -> dict:
+    from sqlalchemy import func, select
+
+    from .db import session_scope
+    from .gtfs_static import active_feed_id
+    from .schema import GtfsFeed, GtfsRoute, GtfsStop
+
+    with session_scope() as session:
+        codes = session.execute(select(GtfsFeed.agency_code).distinct()).scalars().all()
+        agencies = []
+        for code in codes:
+            feed_id = active_feed_id(session, code)
+            feed = session.get(GtfsFeed, feed_id) if feed_id else None
+            routes = session.scalar(select(func.count()).select_from(GtfsRoute).where(GtfsRoute.feed_id == feed_id))
+            stops = session.scalar(select(func.count()).select_from(GtfsStop).where(GtfsStop.feed_id == feed_id))
+            agencies.append(
+                {
+                    "agency_code": code,
+                    "active_feed_id": feed_id,
+                    "feed_start": str(feed.feed_start) if feed and feed.feed_start else None,
+                    "feed_end": str(feed.feed_end) if feed and feed.feed_end else None,
+                    "route_count": int(routes or 0),
+                    "stop_count": int(stops or 0),
+                }
+            )
+    return {"agencies": agencies, "count": len(agencies)}
+
+
+@app.get("/api/gtfs/routes", dependencies=[Depends(authorize)])
+def list_gtfs_routes(
+    agency: str | None = Query(default=None, max_length=64),
+    q: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    from sqlalchemy import func, or_, select
+
+    from .db import session_scope
+    from .gtfs_static import active_feed_id
+    from .schema import GtfsFeed, GtfsRoute
+
+    with session_scope() as session:
+        if agency:
+            codes = [agency.strip().upper()]
+        else:
+            codes = session.execute(select(GtfsFeed.agency_code).distinct()).scalars().all()
+        items: list[dict] = []
+        total = 0
+        for code in codes:
+            feed_id = active_feed_id(session, code)
+            if feed_id is None:
+                continue
+            statement = select(GtfsRoute).where(GtfsRoute.feed_id == feed_id)
+            if q:
+                pattern = f"%{q.strip()}%"
+                statement = statement.where(
+                    or_(GtfsRoute.route_id.ilike(pattern), GtfsRoute.short_name.ilike(pattern), GtfsRoute.long_name.ilike(pattern))
+                )
+            total += int(session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+            for route in session.execute(statement.order_by(GtfsRoute.short_name, GtfsRoute.route_id).limit(limit).offset(offset)).scalars():
+                items.append(
+                    {
+                        "agency_code": route.agency_code,
+                        "route_id": route.route_id,
+                        "short_name": route.short_name,
+                        "long_name": route.long_name,
+                        "route_type": route.route_type,
+                        "color": route.color,
+                        "feed_id": route.feed_id,
+                    }
+                )
+    return {"routes": items[:limit], "count": len(items[:limit]), "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/api/gtfs/routes/{route_id}", dependencies=[Depends(authorize)])
+def gtfs_route_detail(route_id: str, agency: str | None = Query(default=None, max_length=64)) -> dict:
+    from sqlalchemy import func, select
+
+    from .db import session_scope
+    from .gtfs_static import active_feed_id
+    from .schema import GtfsFeed, GtfsRoute, GtfsStop, GtfsStopTime, GtfsTrip
+
+    with session_scope() as session:
+        codes = [agency.strip().upper()] if agency else session.execute(select(GtfsFeed.agency_code).distinct()).scalars().all()
+        for code in codes:
+            feed_id = active_feed_id(session, code)
+            if feed_id is None:
+                continue
+            route = session.scalar(
+                select(GtfsRoute).where(GtfsRoute.feed_id == feed_id, GtfsRoute.route_id == route_id)
+            )
+            if route is None:
+                continue
+            trip_ids = session.execute(
+                select(GtfsTrip.trip_id).where(GtfsTrip.feed_id == feed_id, GtfsTrip.route_id == route_id)
+            ).scalars().all()
+            trip_count = len(trip_ids)
+            times = session.execute(
+                select(
+                    func.min(GtfsStopTime.departure_time),
+                    func.max(GtfsStopTime.departure_time),
+                ).where(GtfsStopTime.feed_id == feed_id, GtfsStopTime.trip_id.in_(trip_ids))
+            ).one() if trip_ids else (None, None)
+            stop_rows = session.execute(
+                select(GtfsStop)
+                .where(
+                    GtfsStop.feed_id == feed_id,
+                    GtfsStop.stop_id.in_(
+                        select(GtfsStopTime.stop_id).where(
+                            GtfsStopTime.feed_id == feed_id, GtfsStopTime.trip_id.in_(trip_ids)
+                        )
+                    ),
+                )
+                .distinct()
+                .order_by(GtfsStop.name)
+                .limit(500)
+            ).scalars().all()
+            return {
+                "agency_code": code,
+                "feed_id": feed_id,
+                "route_id": route.route_id,
+                "short_name": route.short_name,
+                "long_name": route.long_name,
+                "route_type": route.route_type,
+                "color": route.color,
+                "trip_count": trip_count,
+                "first_departure": times[0],
+                "last_departure": times[1],
+                "stop_count": len(stop_rows),
+                "stops": [
+                    {
+                        "stop_id": stop.stop_id,
+                        "name": stop.name,
+                        "latitude": stop.latitude,
+                        "longitude": stop.longitude,
+                    }
+                    for stop in stop_rows
+                ],
+                "geometry_note": "Stop coordinates come from the imported feed; no positions are inferred.",
+            }
+    raise HTTPException(status_code=404, detail=f"Route {route_id} is not in the imported network")
+
+
+@app.get("/api/gtfs/stops", dependencies=[Depends(authorize)])
+def list_gtfs_stops(
+    agency: str | None = Query(default=None, max_length=64),
+    q: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    from sqlalchemy import func, select
+
+    from .db import session_scope
+    from .gtfs_static import active_feed_id
+    from .schema import GtfsFeed, GtfsStop
+
+    with session_scope() as session:
+        codes = [agency.strip().upper()] if agency else session.execute(select(GtfsFeed.agency_code).distinct()).scalars().all()
+        items: list[dict] = []
+        total = 0
+        for code in codes:
+            feed_id = active_feed_id(session, code)
+            if feed_id is None:
+                continue
+            statement = select(GtfsStop).where(GtfsStop.feed_id == feed_id)
+            if q:
+                statement = statement.where(GtfsStop.name.ilike(f"%{q.strip()}%"))
+            total += int(session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+            for stop in session.execute(statement.order_by(GtfsStop.name).limit(limit).offset(offset)).scalars():
+                items.append(
+                    {
+                        "agency_code": stop.agency_code,
+                        "stop_id": stop.stop_id,
+                        "name": stop.name,
+                        "latitude": stop.latitude,
+                        "longitude": stop.longitude,
+                    }
+                )
+    return {"stops": items[:limit], "count": len(items[:limit]), "total": total, "limit": limit, "offset": offset}
 
 
 @app.exception_handler(HTTPException)
