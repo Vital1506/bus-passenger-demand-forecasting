@@ -844,6 +844,218 @@ function setup() {
   refreshStatus();
   window.setInterval(() => { if (document.visibilityState === "visible") refreshStatus(); }, 60000);
 }
+
+import { buildGtfsNetworkState, gtfsRouteSearch, gtfsStopSequence, routeTypeLabel } from "./gtfs_network.mjs";
+
+const GTFS_AGENCY_ENDPOINT = "/api/gtfs/agencies";
+const GTFS_ROUTES_ENDPOINT = (agencyCode) => `/api/gtfs/routes?agency=${encodeURIComponent(agencyCode)}`;
+const GTFS_ROUTE_DETAIL_ENDPOINT = (agencyCode, routeId) => `/api/gtfs/routes/${encodeURIComponent(routeId)}?agency=${encodeURIComponent(agencyCode)}`;
+
+function gtfsNetworkBadge(text){ const node=$("#gtfsNetworkBadge"); if(node) node.textContent=text; }
+function gtfsShow(target){ for(const id of ["gtfsNetworkLoading","gtfsNetworkError","gtfsNetworkEmpty","gtfsNetworkBody"]){ const n=$(`#${id}`); if(n) n.classList.toggle("hidden", id!==target); } }
+
+function normalizeGtfsAgencies(payload){
+  const list=Array.isArray(payload?.agencies)?payload.agencies:[];
+  return list.filter((a)=>a?.agency_code && a.route_count!=null).map((a)=>({agency_code:String(a.agency_code),route_count:Number(a.route_count),stop_count:Number(a.stop_count)}));
+}
+function countAgencies(list){ return new Set(list.map(a=>a.agency_code)).size; }
+function countRoutes(list){ return list.reduce((total,a)=>total+(a.route_count||0),0); }
+
+function renderGtfsAgencyList(agencies){
+  const list=$("#gtfsAgencySearch");
+  if(!list) return;
+  while(list.nextElementSibling && list.nextElementSibling.tagName==="DATALIST") list.nextElementSibling.remove();
+  const datalist=document.createElement("datalist");
+  datalist.id="gtfsAgencyList";
+  datalist.replaceChildren(...agencies.map((a)=>{const o=document.createElement("option");o.value=a.agency_code;return o;}));
+  document.head.appendChild(datalist);
+  list.setAttribute("list","gtfsAgencyList");
+}
+
+function renderGtfsRoutes(){
+  const g=state.gtfs;
+  const q=$("#gtfsRouteQuery")?.value ?? "";
+  g.query=q;
+  const results=gtfsRouteSearch(g.routes,q,120);
+  const ul=$("#gtfsRouteResults");
+  if(!ul) return;
+  ul.replaceChildren(...results.map((route)=>{
+    const li=document.createElement("li");
+    const b=document.createElement("button");
+    b.type="button";
+    b.className="explorer-route";
+    b.dataset.routeId=route.route_id;
+    b.setAttribute("role","option");
+    b.setAttribute("aria-selected",String(route.route_id===g.selected));
+    const pill=document.createElement("span"); pill.className="route-pill"; pill.textContent=route.route_id;
+    const name=document.createElement("span"); name.className="explorer-route-name"; name.textContent=route.long_name||route.short_name||route.route_id;
+    const meta=document.createElement("small"); meta.textContent=`${route.stop_count?.toLocaleString()||0} stops · ${route.trip_count?.toLocaleString()||0} trips`;
+    b.append(pill,name,meta);
+    li.appendChild(b);
+    return li;
+  }));
+  $("#gtfsRoutesEmpty").classList.toggle("hidden",results.length>0);
+  $("#gtfsNetworkHint").textContent=q.trim()
+    ?`${results.length.toLocaleString()} matching route${results.length===1?"":"s"} for “${q.trim()}”.`
+    :`Showing ${results.length.toLocaleString()} of ${g.routes.length.toLocaleString()} routes, busiest first. Type a route number or name to narrow the list.`;
+}
+
+async function loadGtfsNetwork(){
+  const g=state.gtfs;
+  g.loading=true;
+  gtfsShow("gtfsNetworkLoading");
+  gtfsNetworkBadge("Loading network…");
+  $("#gtfsNetworkHint").textContent="Loading the route network…";
+  try{
+    g.agencies=await normalizeGtfsAgencies(await publicJson(GTFS_AGENCY_ENDPOINT));
+    if(!g.agencies.length){
+      gtfsShow("gtfsNetworkEmpty");
+      gtfsNetworkBadge("No network");
+      $("#gtfsNetworkHint").textContent="No GTFS routes are stored on this server yet.";
+      g.loaded=true;
+      return;
+    }
+    g.loaded=true;
+    gtfsNetworkBadge(`${countAgencies(g.agencies)} agency${g.agencies.length===1?"":"ies"} · ${countRoutes(g.agencies)} routes`);
+    gtfsShow("gtfsNetworkBody");
+    renderGtfsAgencyList(g.agencies);
+    g.agency=g.agency || g.agencies[0].agency_code;
+    $("#gtfsAgencySearch").value=g.agency;
+    await selectGtfsAgency(g.agency);
+  }catch(error){
+    gtfsShow("gtfsNetworkError");
+    const n=$("#gtfsNetworkError"); if(n) n.textContent=describeError(error,"dataset");
+    gtfsNetworkBadge("Network unavailable");
+    $("#gtfsNetworkHint").textContent="Route network could not be loaded.";
+  }finally{
+    g.loading=false;
+  }
+}
+
+async function selectGtfsAgency(agencyCode){
+  const g=state.gtfs;
+  g.agency=agencyCode;
+  g.selected=null;
+  g.stopsByRoute.clear();
+  $("#gtfsAgencyPill").textContent=agencyCode;
+  try{
+    g.routes=await gtfsNormalizeRoutes(await publicJson(GTFS_ROUTES_ENDPOINT(agencyCode)));
+    if(!g.routes.length){
+      gtfsShow("gtfsNetworkEmpty");
+      $("#gtfsNetworkHint").textContent="No routes for this agency.";
+      return;
+    }
+    gtfsShow("gtfsNetworkBody");
+    renderGtfsRoutes();
+    const initial=gtfsRouteSearch(g.routes,"",1)[0];
+    if(initial) await selectGtfsRoute(initial.route_id);
+  }catch(error){
+    gtfsShow("gtfsNetworkError");
+    const n=$("#gtfsNetworkError"); if(n) n.textContent=describeError(error,"dataset");
+  }
+}
+
+function gtfsNormalizeRoutes(payload){
+  const g=state.gtfs;
+  const list=Array.isArray(payload?.routes)?payload.routes:[];
+  g.routes=list.filter((r)=>r?.route_id && r.route_id.trim()).map((r)=>{
+    const stops=(Array.isArray(r.stops)?r.stops:[]).map((s)=>({stop_id:String(s.stop_id),name:String(s.name),latitude:Number(s.latitude),longitude:Number(s.longitude),sequence:Number(s.sequence)}));
+    const byStop=new Map(stops.map(s=>[s.stop_id,s]));
+    return {
+      agency_code:r.agency_code, route_id:String(r.route_id), short_name:r.short_name, long_name:r.long_name,
+      route_type:Number(r.route_type)||null, color:String(r.color)||null,
+      stop_count:byStop.size,
+      trip_count:Number(r.trip_count)||0,
+      stops:stops.sort((a,b)=>a.sequence-b.sequence),
+      stopsByStop:byStop,
+    };
+  });
+  return g.routes;
+}
+
+async function selectGtfsRoute(routeId){
+  const g=state.gtfs;
+  g.selected=routeId;
+  $("#gtfsRouteResults .explorer-route").forEach((n)=>n.setAttribute("aria-selected",String(n.dataset.routeId===routeId)));
+  $("#gtfsDetailEmpty").classList.add("hidden");
+  $("#gtfsDetail").classList.remove("hidden");
+  $("#gtfsRouteId").textContent=routeId;
+  let route=g.routes.find((r)=>r.route_id===routeId) || g.stopsByRoute.get(routeId);
+  if(!route){
+    $("#gtfsRouteName").textContent="Loading…";
+    try{
+      const detail=await gtfsNormalizeRoutes(await publicJson(GTFS_ROUTE_DETAIL_ENDPOINT(g.agency,routeId)));
+      g.stopsByRoute.set(routeId,detail);
+      route=detail.find((r)=>r.route_id===routeId);
+    }catch(error){
+      $("#gtfsRouteName").textContent="Unavailable";
+      $("#gtfsSpan").textContent="—";
+      const empty=$("#gtfsStopsEmpty"); empty.classList.remove("hidden"); empty.textContent=describeError(error,"route");
+      $("#gtfsStopsList").innerHTML=`<li class="empty-row"><td colspan="3">${escapeHtml(describeError(error,"route"))}</td></tr>`;
+      $("#gtfsGeometryNote").textContent="—";
+      return;
+    }
+  }
+  if(!route){
+    $("#gtfsRouteName").textContent="—";
+    $("#gtfsSpan").textContent="—";
+    return;
+  }
+  $("#gtfsRouteName").textContent=route.long_name||route.short_name||route.route_id;
+  $("#gtfsRouteType").textContent=routeTypeLabel(route.route_type);
+  $("#gtfsRouteStops").textContent=(route.stop_count??0).toLocaleString();
+  $("#gtfsSpan").textContent=route.trip_count?.toLocaleString()+" trips";
+  $("#gtfsGeometryNote").textContent="Stop sequence comes from the imported feed; no positions are inferred.";
+  const ol=$("#gtfsStopsList");
+  if(!ol) return;
+  const stops=gtfsStopSequence(route.stops);
+  if(!stops.length){
+    ol.innerHTML=`<li class="empty-row"><td colspan="3">No stops for this route.</td></li>`;
+    return;
+  }
+  ol.replaceChildren(...stops.map((s)=>{
+    const li=document.createElement("li");
+    const seq=document.createElement("span"); seq.className="seq"; seq.textContent=String(s.sequence==null?"—":s.sequence);
+    const name=document.createElement("span"); name.className="stop-name"; name.textContent=s.name||"—";
+    const coords=document.createElement("span"); coords.className="stop-coords";
+    coords.textContent=(s.latitude!=null&&isFinite(s.latitude)&&isFinite(s.longitude))
+      ?`${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)}`
+      :"—";
+    li.append(seq,name,coords);
+    return li;
+  }));
+}
+
+$(document).on("input", "#gtfsRouteQuery", ()=>{ if(state.gtfs.loaded) renderGtfsRoutes(); });
+$(document).on("submit", "#gtfsRouteSearchForm", (event)=>{ event.preventDefault(); if(state.gtfs.loaded) renderGtfsRoutes(); });
+$(document).on("click", "#gtfsRouteClear", ()=>{ $("#gtfsRouteQuery").value=""; if(state.gtfs.loaded) renderGtfsRoutes(); $("#gtfsRouteQuery").focus(); });
+$(document).on("click", "#gtfsRouteResults", (event)=>{ const button=event.target.closest(".explorer-route"); if(button && state.gtfs.loaded) void selectGtfsRoute(button.dataset.routeId); });
+$(document).on("input", "#gtfsAgencySearch", ()=>{ if(state.gtfs.loaded){ state.gtfs.agency=$("#gtfsAgencySearch").value.trim()||state.gtfs.agencies[0]?.agency_code; void selectGtfsAgency(state.gtfs.agency); } });
+window.addEventListener("resize", ()=>{ const route=state.gtfs.stopsByRoute.get(state.gtfs.selected); if(route) renderGtfsStopList(route); });
+
+function renderGtfsStopList(route){
+  const ol=$("#gtfsStopsList");
+  if(!ol) return;
+  const stops=gtfsStopSequence(route.stops);
+  if(!stops.length){ ol.innerHTML=`<li class="empty-row"><td colspan="3">No stops for this route.</td></li>`; return; }
+  ol.replaceChildren(...stops.map((s)=>{
+    const li=document.createElement("li");
+    const seq=document.createElement("span"); seq.className="seq"; seq.textContent=String(s.sequence==null?"—":s.sequence);
+    const name=document.createElement("span"); name.className="stop-name"; name.textContent=s.name||"—";
+    const coords=document.createElement("span"); coords.className="stop-coords";
+    coords.textContent=(s.latitude!=null&&isFinite(s.latitude)&&isFinite(s.longitude))
+      ?`${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)}`
+      :"—";
+    li.append(seq,name,coords);
+    return li;
+  }));
+}
+
+;(() => {
+  if(!PAGE_INFO.routes) return;
+  navigate(PAGE_INFO.routes[0], false);
+  $("#routesPage-v2").addEventListener("click", (e)=>{ if(state.gtfs.loaded) void loadGtfsNetwork(); });
+})();
 document.addEventListener("DOMContentLoaded", setup);
 
 

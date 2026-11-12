@@ -153,6 +153,51 @@
           <p class="table-footnote">Approximate range based on historical backtest errors. It is not a guarantee.</p>
         </section>
 
+
+        <section class="page-panel panel" data-pages="routes" id="routesPage-v2" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">GTFS NETWORK</p><h2>Route network</h2></div><span class="horizon-badge" id="gtfsNetworkBadge">Loading network…</span></div>
+          <p class="page-lead">Search the imported GTFS route network by agency, route number, or name. Stop coordinates and station order come from the imported feed; no positions are inferred.</p>
+          <form class="explorer-search" id="gtfsRouteSearchForm" role="search">
+            <label class="sr-only" for="gtfsAgencySearch">Agency</label>
+            <input id="gtfsAgencySearch" type="search" placeholder="Agency (optional)" autocomplete="off" maxlength="64" aria-describedby="gtfsNetworkHint" list="gtfsAgencyList" /><datalist id="gtfsAgencyList"></datalist>
+            <label class="sr-only" for="gtfsRouteQuery">Route</label>
+            <input id="gtfsRouteQuery" type="search" placeholder="Route number or name (e.g. R1 or Main Line)" autocomplete="off" maxlength="120" aria-controls="gtfsRouteResults" aria-describedby="gtfsNetworkHint" />
+            <button id="gtfsRouteClear" class="button button-quiet" type="button">Clear</button>
+          </form>
+          <p id="gtfsNetworkHint" class="explorer-hint" role="status" aria-live="polite">Loading the route network…</p>
+          <div id="gtfsNetworkLoading" class="explorer-loading" role="status" aria-live="polite" hidden><span class="explorer-spinner" aria-hidden="true"></span> Loading routes…</div>
+          <div id="gtfsNetworkError" class="explorer-message error hidden" role="alert"></div>
+          <div id="gtfsNetworkEmpty" class="explorer-message hidden">No GTFS feeds have been imported into this server yet.</div>
+          <div id="gtfsNetworkBody" class="explorer-grid hidden">
+            <aside class="explorer-results" aria-labelledby="gtfsRoutesTitle">
+              <h3 id="gtfsRoutesTitle">Matching routes</h3>
+              <p id="gtfsRoutesEmpty" class="explorer-message hidden">No routes match that search.</p>
+              <ul id="gtfsRouteResults" class="explorer-route-list" role="listbox" aria-label="Matching GTFS routes"></ul>
+            </aside>
+            <div class="explorer-detail">
+              <div id="gtfsDetailEmpty" class="explorer-message">Choose a route to view its stops.</div>
+              <div id="gtfsDetail" class="hidden">
+                <div class="summary-cards gtfs-summary">
+                  <article><small>Route</small><strong id="gtfsRouteId">—</strong></article>
+                  <article><small>Long name</small><strong id="gtfsRouteName">—</strong></article>
+                  <article><small>Route type</small><strong id="gtfsRouteType">—</strong></article>
+                  <article><small>Stops</small><strong id="gtfsRouteStops">—</strong></article>
+                </div>
+                <div class="explorer-route-head"><span class="route-pill" id="gtfsAgencyPill">—</span><strong id="gtfsLongName">—</strong><span id="gtfsSpan" class="explorer-span">—</span></div>
+                <div id="gtfsStopsWrap" class="explorer-chart-wrap">
+                  <div id="gtfsStopsEmpty" class="explorer-message hidden">No stops for this route.</div>
+                  <ol id="gtfsStopsList" class="stops-list"></ol>
+                </div>
+                <p class="chart-legend explorer-legend"><span><i class="legend-line"></i>Stop sequence along the route</span></p>
+                <p id="gtfsGeometryNote" class="explorer-gaps">—</p>
+              </div>
+            </div>
+          </div>
+          <div class="explorer-source">
+            <p><strong>Source:</strong> Imported GTFS Schedule feed (agency.txt, routes.txt, stops.txt, trips.txt, stop_times.txt). Coordinates and stop order come from the feed only.</p>
+          </div>
+        </section>
+
         <section class="page-panel panel" data-pages="routes" id="routesPage">
           <div class="panel-heading"><div><p class="eyebrow">SERVICE PERFORMANCE</p><h2>Route outlook</h2></div><span class="horizon-badge">Forecast totals</span></div>
           <p class="page-lead">Compare expected boardings across routes for the current forecast window. Estimates update when the connected service publishes a new forecast.</p>
