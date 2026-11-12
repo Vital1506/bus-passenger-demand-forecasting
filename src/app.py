@@ -723,6 +723,36 @@ def home() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
 
 
+@app.get("/api/ready")
+def readiness() -> JSONResponse:
+    """Readiness probe: database reachability plus the applied schema revision."""
+    from .db import check_database, migration_status
+
+    database = check_database()
+    migrations = migration_status()
+    ready = bool(database["reachable"]) and not migrations["pending"]
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"ready": ready, "database": database, "migrations": migrations},
+    )
+
+
+@app.get("/api/migrations", dependencies=[Depends(authorize)])
+def migration_report() -> dict:
+    """Operator view of the database revision and migration state."""
+    from .db import check_database, migration_status
+
+    return {"database": check_database(), "migrations": migration_status()}
+
+
+@app.get("/api/storage/health", dependencies=[Depends(authorize)])
+def storage_report() -> dict:
+    """Operator view of data-directory writability, space, and key artifacts."""
+    from .db import storage_health
+
+    return storage_health(DATA_DIR)
+
+
 @app.exception_handler(HTTPException)
 async def api_error_handler(_request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
