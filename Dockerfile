@@ -10,6 +10,8 @@ COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir -r requirements.txt
 COPY src ./src
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
 COPY data/sample_daily_ridership.csv ./data/sample_daily_ridership.csv
 COPY web ./web
 EXPOSE 8000
