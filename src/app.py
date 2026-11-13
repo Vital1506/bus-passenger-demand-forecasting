@@ -48,6 +48,7 @@ from .hybrid_forecasting import (
 )
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
+from .operations_engine import get_operations_engine
 from .realtime import get_realtime_service
 from .route_identity import canonicalize_manual_route_id
 from .schedule_import import schedules_to_synthetic_counts
@@ -1176,6 +1177,45 @@ def get_route_realtime_forecast(
 @app.get("/api/forecast/intraday")
 def get_intraday_network_curve() -> dict[str, Any]:
     return build_network_intraday_curve()
+
+
+@app.get("/api/operations/alerts")
+def get_operations_alerts(
+    route_id: str | None = None,
+    severity: str | None = None,
+    agency_id: str | None = None,
+) -> list[dict[str, Any]]:
+    engine = get_operations_engine()
+    anomalies, _, _ = engine.evaluate_fleet(agency_id=agency_id)
+    filtered = anomalies
+    if route_id:
+        filtered = [a for a in filtered if a.route_id == route_id]
+    if severity:
+        filtered = [a for a in filtered if a.severity.upper() == severity.upper()]
+    return [a.to_dict() for a in filtered]
+
+
+@app.get("/api/operations/dispatch-recommendations")
+def get_dispatch_recommendations(
+    route_id: str | None = None,
+    priority: str | None = None,
+    agency_id: str | None = None,
+) -> list[dict[str, Any]]:
+    engine = get_operations_engine()
+    _, recs, _ = engine.evaluate_fleet(agency_id=agency_id)
+    filtered = recs
+    if route_id:
+        filtered = [r for r in filtered if r.route_id == route_id]
+    if priority:
+        filtered = [r for r in filtered if r.priority.upper() == priority.upper()]
+    return [r.to_dict() for r in filtered]
+
+
+@app.get("/api/operations/metrics")
+def get_operations_metrics(agency_id: str | None = None) -> dict[str, Any]:
+    engine = get_operations_engine()
+    _, _, metrics = engine.evaluate_fleet(agency_id=agency_id)
+    return metrics.to_dict()
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
