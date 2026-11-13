@@ -32,6 +32,7 @@ from .db import (
     upsert_monthly_records as repo_upsert_monthly_records,
     write_source_metadata as repo_write_source_metadata,
 )
+from .auth import resolve_role, UserRole
 from .data_quality import get_quality_monitor
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
@@ -1249,6 +1250,42 @@ def check_quality_drift() -> dict[str, Any]:
             pass
     rep = monitor.assess_drift(df)
     return rep.to_dict()
+
+
+@app.get("/api/auth/roles")
+def get_auth_roles(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = resolve_role(authorization)
+    permissions = {
+        UserRole.PUBLIC: ["read_public_demo", "read_gtfs_schedules", "read_health"],
+        UserRole.OPERATOR: [
+            "read_public_demo",
+            "read_gtfs_schedules",
+            "read_health",
+            "read_forecasts",
+            "upload_daily_counts",
+            "read_realtime_telemetry",
+            "read_operations_board",
+        ],
+        UserRole.ADMINISTRATOR: [
+            "read_public_demo",
+            "read_gtfs_schedules",
+            "read_health",
+            "read_forecasts",
+            "upload_daily_counts",
+            "read_realtime_telemetry",
+            "read_operations_board",
+            "train_models",
+            "upload_gtfs_schedule",
+            "upload_monthly_data",
+            "access_quality_drift",
+            "manage_database",
+        ],
+    }
+    return {
+        "role": role.value,
+        "is_authenticated": role != UserRole.PUBLIC,
+        "permissions": permissions.get(role, []),
+    }
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
