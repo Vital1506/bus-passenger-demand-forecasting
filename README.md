@@ -215,6 +215,41 @@ The pilot blueprint is still a single-instance deployment with a shared bearer-k
 
 Every model forecast is recursive: predictions earlier in the requested horizon feed lag features for later dates. Historical validation follows that same process. This avoids evaluating a one-step model as if it were a multi-day forecasting system.
 
+## Enterprise transit intelligence capabilities
+
+### 1. Standardized APC / AFC observation pipeline
+- **Direct ingestion:** accepts automated passenger count (APC) and fare collection (AFC) records via `POST /api/passenger-data/upload`.
+- **Integrity validation:** validates route identifiers, calendar dates, non-negative boardings and alightings, optional GPS timestamps, trip sequences, and vehicle assignments.
+- **Idempotency:** duplicate records are resolved without ever multiplying passenger counts on repeated uploads.
+- **Audit tracking:** records each batch into versioned `import_jobs` with SHA-256 checksums and execution durations.
+
+### 2. Passenger occupancy & capacity intelligence
+- **Conservation equation:** strictly implements stop-level passenger conservation along verified transit paths:
+  $$\text{Occupancy}_n = \text{Occupancy}_{n-1} + \text{Boardings}_n - \text{Alightings}_n$$
+- **Physical validation:** non-negative passenger load clamping with anomaly disclosure; explicit overcapacity flags when load exceeds verified vehicle capacity.
+- **Vehicle assets:** queries trusted fleet capacity configurations (`vehicles` table: seated, standing, and total capacity).
+- **APIs:** `GET /api/occupancy/trip/{trip_id}`, `GET /api/occupancy/route/{route_id}`.
+
+### 3. Multi-model ML benchmarking & empirical prediction intervals
+- **Candidate models:** compares `HistGradientBoostingRegressor`, `RandomForestRegressor`, and `ExtraTreesRegressor` against recursive `SeasonalNaive`.
+- **Leaderboard:** ranks models on out-of-fold holdout WAPE, MAE, and RMSE via `GET /api/model/benchmark`.
+- **Calibrated intervals:** derives empirical 90% error ranges ($Q_{0.05}$ and $Q_{0.95}$) directly from historical holdout residuals rather than unverified symmetric approximations.
+
+### 4. Intelligent service planning simulator
+- **What-if decision support:** interactive simulation comparing planned frequency/capacity against forecast passenger demand (`POST /api/simulator/evaluate`).
+- **Scenario controls:** test headway adjustments (+/- trips per hour), fleet capacity allocations, and operating hours.
+- **Operational metrics:** quantifies capacity buffers, seat utilization percentages, and crowding risk levels (`LOW`, `MODERATE`, `HIGH`, `CRITICAL`).
+
+### 5. Operational reporting & webhook dispatching
+- **Daily passenger summaries:** generates route-by-route boarding totals via `GET /api/reports/daily` and CSV streams via `GET /api/reports/daily/csv`.
+- **Capacity risk reports:** lists overcapacity and overcrowding incidents via `GET /api/reports/capacity-risk`.
+- **Webhook dispatching:** sends real-time incident payloads to operational monitoring systems via `POST /api/reports/webhook`.
+
+### 6. Security, RBAC & agency tenant isolation
+- **Three-tier RBAC:** `ADMINISTRATOR` (model training, GTFS upload, migrations), `OPERATOR` (telemetry, dispatch, count ingestion), and `ANALYST` (read-only queries).
+- **Tenant isolation:** agency-scoped queries and data filtering prevent cross-operator contamination.
+- **Key resolution:** supports `BUS_FORECAST_ADMIN_KEY`, `BUS_FORECAST_OPERATOR_KEY`, `BUS_FORECAST_ANALYST_KEY`, and unified `BUS_FORECAST_API_KEY`.
+
 ## Setup
 
 Python 3.10 or newer is required.

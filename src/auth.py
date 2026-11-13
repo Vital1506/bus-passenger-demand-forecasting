@@ -13,6 +13,7 @@ from fastapi import Header, HTTPException
 
 class UserRole(str, Enum):
     PUBLIC = "public"
+    ANALYST = "analyst"
     OPERATOR = "operator"
     ADMINISTRATOR = "administrator"
 
@@ -62,11 +63,14 @@ def resolve_role(authorization: str | None = None) -> UserRole:
 
     admin_key = os.getenv("BUS_FORECAST_ADMIN_KEY") or os.getenv("BUS_FORECAST_API_KEY")
     operator_key = os.getenv("BUS_FORECAST_OPERATOR_KEY") or os.getenv("BUS_FORECAST_API_KEY")
+    analyst_key = os.getenv("BUS_FORECAST_ANALYST_KEY") or operator_key
 
     if admin_key and token == admin_key:
         return UserRole.ADMINISTRATOR
     if operator_key and token == operator_key:
         return UserRole.OPERATOR
+    if analyst_key and token == analyst_key:
+        return UserRole.ANALYST
 
     return UserRole.PUBLIC
 
@@ -79,8 +83,9 @@ def require_role(min_role: UserRole):
 
         role_hierarchy = {
             UserRole.PUBLIC: 0,
-            UserRole.OPERATOR: 1,
-            UserRole.ADMINISTRATOR: 2,
+            UserRole.ANALYST: 1,
+            UserRole.OPERATOR: 2,
+            UserRole.ADMINISTRATOR: 3,
         }
 
         if role_hierarchy[role] < role_hierarchy[min_role]:
@@ -97,3 +102,12 @@ def require_role(min_role: UserRole):
         return role
 
     return role_dependency
+
+
+def verify_agency_isolation(caller_role: UserRole, caller_agency: str | None, target_agency: str | None) -> bool:
+    """Enforce agency-level tenant isolation. Administrators have global access; operators are restricted."""
+    if caller_role == UserRole.ADMINISTRATOR:
+        return True
+    if not caller_agency or not target_agency:
+        return True
+    return caller_agency.strip().lower() == target_agency.strip().lower()

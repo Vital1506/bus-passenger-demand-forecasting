@@ -62,3 +62,15 @@ test("live operations dashboard declares accessible fleet radar and dispatch com
   assert.match(app, /\/api\/operations\/dispatch-recommendations/);
   assert.match(app, /\/api\/realtime\/vehicles/);
 });
+
+test("service planner and occupancy pages declare required interactive elements", () => {
+  assert.match(html, /data-view="planner"/);
+  assert.match(html, /id="plannerPage"/);
+  assert.match(html, /id="runSimButton"/);
+  assert.match(html, /id="simSummaryText"/);
+
+  assert.match(html, /data-view="occupancy"/);
+  assert.match(html, /id="occupancyPage"/);
+  assert.match(html, /id="loadTripOccButton"/);
+  assert.match(html, /id="occStopsTableBody"/);
+});

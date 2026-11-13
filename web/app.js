@@ -179,6 +179,8 @@ const PAGE_INFO = {
   routes: ["Routes", "Search route history and compare forecast totals."],
   network: ["Transit Network", "Inspect transit agencies, route alignments, schedules, and stops."],
   operations: ["Live Operations", "Monitor real-time vehicle positions, delays, bunching alerts, and dispatch actions."],
+  planner: ["Service Planner", "Simulate frequency adjustments and capacity buffers against forecast demand."],
+  occupancy: ["Occupancy & Capacity", "Inspect stop-level passenger conservation loads and overcapacity warnings."],
   data: ["My data", "See which passenger counts are saved and when they were updated."],
   model: ["How it works", "A plain-language guide to the data and forecast."]
 };
@@ -756,6 +758,110 @@ function setupOperationsListeners() {
     });
   }
 }
+
+function initPlanner() {
+  const btn = $("#runSimButton");
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = "true";
+
+  btn.addEventListener("click", () => {
+    withBusy("Evaluating simulation scenario…", async () => {
+      const payload = {
+        route_id: $("#simRouteInput").value.trim() || "1",
+        forecast_hourly_demand: Number($("#simDemandInput").value) || 200,
+        baseline_trips_per_hour: Number($("#simBaseFreqInput").value) || 4,
+        modified_trips_per_hour: Number($("#simModFreqInput").value) || 6,
+        vehicle_capacity: Number($("#simCapacityInput").value) || 55,
+        operating_hours: 16,
+      };
+      try {
+        const res = await api("/api/simulator/evaluate", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        $("#simBaseCap").textContent = `${res.baseline_capacity_per_hour} pax`;
+        $("#simModCap").textContent = `${res.modified_capacity_per_hour} pax`;
+        $("#simBaseUtil").textContent = `${res.baseline_utilization_pct}%`;
+        $("#simModUtil").textContent = `${res.modified_utilization_pct}%`;
+
+        const badge = $("#simRiskBadge");
+        badge.textContent = `Risk: ${res.crowding_risk_modified}`;
+        badge.style.background = res.crowding_risk_modified === "CRITICAL" ? "#fee2e2" : (res.crowding_risk_modified === "HIGH" ? "#fef3c7" : "#dcfce7");
+        badge.style.color = res.crowding_risk_modified === "CRITICAL" ? "#991b1b" : (res.crowding_risk_modified === "HIGH" ? "#92400e" : "#166534");
+
+        $("#simSummaryText").textContent = res.operational_summary;
+        toast("Simulation completed!");
+      } catch (err) {
+        toast(`Simulation error: ${err.message}`);
+      }
+    });
+  });
+}
+
+function initOccupancy() {
+  const tripBtn = $("#loadTripOccButton");
+  if (tripBtn && !tripBtn.dataset.bound) {
+    tripBtn.dataset.bound = "true";
+    tripBtn.addEventListener("click", () => {
+      const tripId = $("#occTripInput").value.trim();
+      if (!tripId) {
+        toast("Enter a valid Trip ID");
+        return;
+      }
+      withBusy("Loading trip occupancy…", async () => {
+        try {
+          const res = await api(`/api/occupancy/trip/${encodeURIComponent(tripId)}`);
+          $("#occPeakLoad").textContent = `${res.peak_occupancy} pax`;
+          $("#occVehicleCap").textContent = `${res.vehicle_capacity} cap`;
+          $("#occPeakUtil").textContent = `${res.peak_utilization_pct}%`;
+          $("#occConfidenceBadge").textContent = `Status: ${res.confidence_status}`;
+
+          const tbody = $("#occStopsTableBody");
+          if (res.stops && res.stops.length > 0) {
+            tbody.innerHTML = res.stops.map((s) => `
+              <tr>
+                <td>${s.stop_sequence}</td>
+                <td><strong>${escapeText(s.stop_id)}</strong></td>
+                <td class="numeric">${s.boardings}</td>
+                <td class="numeric">${s.alightings}</td>
+                <td class="numeric"><strong>${s.onboard_load}</strong></td>
+                <td><span class="status-badge" style="background:${s.is_overcapacity ? '#fee2e2' : '#f1f5f9'}; color:${s.is_overcapacity ? '#991b1b' : '#334155'}; font-size:11px;">${s.utilization_pct}%</span></td>
+              </tr>
+            `).join("");
+          } else {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-row">No stops recorded for this trip.</td></tr>';
+          }
+          toast("Trip occupancy loaded!");
+        } catch (err) {
+          toast(err.message || "Trip occupancy not found");
+        }
+      });
+    });
+  }
+
+  const routeBtn = $("#loadRouteOccButton");
+  if (routeBtn && !routeBtn.dataset.bound) {
+    routeBtn.dataset.bound = "true";
+    routeBtn.addEventListener("click", () => {
+      const routeId = $("#occRouteInput").value.trim();
+      if (!routeId) {
+        toast("Enter a valid Route ID");
+        return;
+      }
+      withBusy("Checking route capacity…", async () => {
+        try {
+          const res = await api(`/api/occupancy/route/${encodeURIComponent(routeId)}`);
+          $("#occPeakUtil").textContent = `${res.average_peak_utilization_pct}%`;
+          $("#occConfidenceBadge").textContent = `Trips evaluated: ${res.trips_evaluated} (${res.status})`;
+          toast(res.message || "Route capacity checked!");
+        } catch (err) {
+          toast(err.message || "Route capacity error");
+        }
+      });
+    });
+  }
+}
+
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function renderPlaceSuggestions(input, list, values, preferred = []) {
   if (!input || !list) return;
@@ -929,6 +1035,8 @@ function navigate(view, updateHash = true) {
   if (view === "routes") void searchMonthlyRoutes($("#monthlyRouteSearch").value);
   if (view === "network") void initNetworkExplorer();
   if (view === "operations") void initOperationsDashboard();
+  if (view === "planner") void initPlanner();
+  if (view === "occupancy") void initOccupancy();
 }
 function readRoutePlans() {
   try {

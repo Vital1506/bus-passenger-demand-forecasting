@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -31,7 +32,7 @@ def recursive_forecast(model: Pipeline, history: pd.DataFrame, horizon: int) -> 
     last_date = pd.to_datetime(working["service_date"]).max()
     output = []
     for step in range(1, horizon + 1):
-        forecast_date = last_date + pd.Timedelta(days=step)
+        forecast_date = last_date + timedelta(days=step)
         future = pd.DataFrame({"service_date": [forecast_date] * len(routes), "route_id": routes, "passengers": [np.nan] * len(routes)})
         feature_frame = add_features(pd.concat([working, future], ignore_index=True))
         current = feature_frame[feature_frame["service_date"].eq(forecast_date)].copy()

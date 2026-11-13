@@ -48,12 +48,23 @@ from .hybrid_forecasting import (
     build_intraday_route_forecast,
     build_network_intraday_curve,
 )
+from .model_benchmark import run_multi_model_benchmark
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
+from .occupancy_engine import compute_route_capacity_profile, compute_trip_occupancy
 from .operations_engine import get_operations_engine
+from .passenger_data import ingest_apc_dataset, parse_and_validate_apc_data
 from .realtime import get_realtime_service
+from .realtime.provider_registry import get_provider_registry
+from .reporting import (
+    export_daily_report_csv,
+    generate_capacity_risk_report,
+    generate_daily_passenger_report,
+    send_alert_webhook,
+)
 from .route_identity import canonicalize_manual_route_id
 from .schedule_import import schedules_to_synthetic_counts
+from .service_planner import SimulationScenario, run_service_simulation
 from .train import train_project
 
 
@@ -1286,6 +1297,166 @@ def get_auth_roles(authorization: str | None = Header(default=None)) -> dict[str
         "is_authenticated": role != UserRole.PUBLIC,
         "permissions": permissions.get(role, []),
     }
+
+
+class SimulationRequest(BaseModel):
+    route_id: str
+    forecast_hourly_demand: float
+    baseline_trips_per_hour: float
+    modified_trips_per_hour: float
+    vehicle_capacity: int = 55
+    operating_hours: int = 16
+
+
+class WebhookNotificationRequest(BaseModel):
+    webhook_url: str
+    alert_payload: dict[str, Any]
+
+
+@app.post("/api/passenger-data/upload", dependencies=[Depends(authorize)])
+def upload_passenger_data(
+    file: UploadFile = File(...),
+    agency_id: str = "default",
+    source_system: str = "apc",
+) -> dict[str, Any]:
+    """Ingest standardized APC / AFC passenger counting observations."""
+    content = file.file.read(25 * 1024 * 1024 + 1)
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds maximum size of 25 MB")
+
+    clean_df, val_res = parse_and_validate_apc_data(content, agency_id=agency_id, source_system=source_system)
+    if not val_res.is_valid:
+        raise HTTPException(status_code=422, detail={"errors": val_res.error_samples, "validation": val_res.to_dict()})
+
+    with get_db_session() as session:
+        result = ingest_apc_dataset(
+            session=session,
+            df=clean_df,
+            agency_id=agency_id,
+            source_system=source_system,
+            source_filename=file.filename or "upload.csv",
+        )
+    return {"message": "Passenger data ingested successfully", "validation": val_res.to_dict(), "result": result}
+
+
+@app.get("/api/occupancy/trip/{trip_id}")
+def get_trip_occupancy(
+    trip_id: str,
+    agency_id: str = "default",
+    fallback_capacity: int = 55,
+) -> dict[str, Any]:
+    """Calculate exact stop-level passenger conservation load for a specific trip."""
+    with get_db_session() as session:
+        profile = compute_trip_occupancy(
+            session=session,
+            trip_id=trip_id,
+            agency_id=agency_id,
+            fallback_capacity=fallback_capacity,
+        )
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"No APC stop-level observations recorded for trip '{trip_id}'")
+    return profile.to_dict()
+
+
+@app.get("/api/occupancy/route/{route_id}")
+def get_route_occupancy_profile(
+    route_id: str,
+    agency_id: str = "default",
+) -> dict[str, Any]:
+    """Retrieve route-level peak capacity utilization across recent trips."""
+    with get_db_session() as session:
+        return compute_route_capacity_profile(session=session, route_id=route_id, agency_id=agency_id)
+
+
+@app.get("/api/model/benchmark")
+def get_model_benchmark(
+    horizon: int = 7,
+    folds: int = 1,
+) -> dict[str, Any]:
+    """Evaluate multi-model benchmark comparing HistGradientBoosting, RandomForest, and SeasonalNaive."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No historical passenger dataset available for model benchmarking")
+    try:
+        data = load_data(str(DATA_PATH))
+        return run_multi_model_benchmark(data, horizon=horizon, folds=folds, candidate_models=["hist_gradient_boosting", "random_forest"])
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/simulator/evaluate")
+def evaluate_service_simulation(request: SimulationRequest) -> dict[str, Any]:
+    """Execute what-if planning simulation comparing planned frequency/capacity against forecast demand."""
+    try:
+        scenario = SimulationScenario(
+            route_id=request.route_id,
+            forecast_hourly_demand=request.forecast_hourly_demand,
+            baseline_trips_per_hour=request.baseline_trips_per_hour,
+            modified_trips_per_hour=request.modified_trips_per_hour,
+            vehicle_capacity=request.vehicle_capacity,
+            operating_hours=request.operating_hours,
+        )
+        result = run_service_simulation(scenario)
+        return result.to_dict()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/daily")
+def get_daily_report(
+    date: str | None = None,
+    agency_id: str = "default",
+) -> dict[str, Any]:
+    """Generate daily passenger demand summary report."""
+    target_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with get_db_session() as session:
+        return generate_daily_passenger_report(session=session, service_date=target_date, agency_id=agency_id)
+
+
+@app.get("/api/reports/daily/csv")
+def download_daily_report_csv(
+    date: str | None = None,
+    agency_id: str = "default",
+) -> Response:
+    """Download daily passenger demand summary as CSV."""
+    target_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with get_db_session() as session:
+        rep = generate_daily_passenger_report(session=session, service_date=target_date, agency_id=agency_id)
+    csv_content = export_daily_report_csv(rep)
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="daily_passenger_report_{target_date}.csv"'},
+    )
+
+
+@app.get("/api/reports/capacity-risk")
+def get_capacity_risk_report(agency_id: str = "default") -> dict[str, Any]:
+    """Retrieve operational capacity and overcrowding risk incidents."""
+    with get_db_session() as session:
+        return generate_capacity_risk_report(session=session, agency_id=agency_id)
+
+
+@app.post("/api/reports/webhook", dependencies=[Depends(authorize)])
+def trigger_alert_webhook(request: WebhookNotificationRequest) -> dict[str, Any]:
+    """Dispatch operational alert to a configured webhook receiver."""
+    success = send_alert_webhook(request.webhook_url, request.alert_payload)
+    if not success:
+        raise HTTPException(status_code=502, detail="Failed to deliver alert payload to specified webhook URL")
+    return {"status": "DELIVERED", "webhook_url": request.webhook_url}
+
+
+@app.get("/api/realtime/providers")
+def list_realtime_providers() -> list[dict[str, Any]]:
+    """List registered GTFS-RT feed providers and connection status."""
+    registry = get_provider_registry()
+    return registry.list_providers()
+
+
+@app.post("/api/realtime/providers/poll", dependencies=[Depends(authorize)])
+def poll_realtime_provider(agency_id: str = "CTA") -> dict[str, Any]:
+    """Trigger manual polling of a registered external GTFS-RT feed provider."""
+    registry = get_provider_registry()
+    return registry.poll_provider(agency_id)
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)

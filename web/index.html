@@ -72,6 +72,8 @@
         <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
         <button type="button" data-view="network"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg></span> Transit Network</button>
         <button type="button" data-view="operations"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span> Live Operations</button>
+        <button type="button" data-view="planner"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Service Planner</button>
+        <button type="button" data-view="occupancy"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> Occupancy</button>
         <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> My data</button>
         <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> How it works</button>
         <span class="nav-status"><i></i><span>API checks every minute</span></span>
@@ -308,6 +310,83 @@
             </div>
           </div>
         </section>
+        <section class="page-panel panel" data-pages="planner" id="plannerPage">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">SERVICE PLANNING SIMULATOR</p>
+              <h2>What-if demand & capacity simulation</h2>
+            </div>
+            <span class="horizon-badge">Decision Support</span>
+          </div>
+          <p class="page-lead">Evaluate headway adjustments, fleet allocation, and capacity shortfalls against forecast demand.</p>
+          <div class="split-view">
+            <div class="input-card">
+              <h3>Scenario parameters</h3>
+              <div class="input-grid">
+                <label>Route ID <input id="simRouteInput" type="text" value="1" /></label>
+                <label>Hourly forecast demand (pax/hr) <input id="simDemandInput" type="number" value="280" min="1" /></label>
+                <label>Baseline frequency (trips/hr) <input id="simBaseFreqInput" type="number" value="4" min="0.5" step="0.5" /></label>
+                <label>Simulated frequency (trips/hr) <input id="simModFreqInput" type="number" value="6" min="0.5" step="0.5" /></label>
+                <label>Vehicle capacity (pax) <input id="simCapacityInput" type="number" value="55" min="10" /></label>
+              </div>
+              <button id="runSimButton" class="button button-primary" type="button" style="margin-top: 1rem;">Run simulation <span>→</span></button>
+            </div>
+            <div class="detail-card">
+              <h3>Simulation outcome</h3>
+              <div class="summary-cards">
+                <article><small>Baseline Capacity</small><strong id="simBaseCap">—</strong></article>
+                <article><small>Simulated Capacity</small><strong id="simModCap">—</strong></article>
+                <article><small>Baseline Util</small><strong id="simBaseUtil">—</strong></article>
+                <article><small>Simulated Util</small><strong id="simModUtil">—</strong></article>
+              </div>
+              <div style="margin-top: 1rem;"><span id="simRiskBadge" class="status-badge" style="background:#e0f2fe; color:#0369a1; padding:0.25rem 0.5rem; border-radius:4px; font-weight:bold;">Awaiting simulation</span></div>
+              <p id="simSummaryText" style="margin-top: 0.75rem; line-height: 1.5; color: var(--text-secondary);">Enter parameters and run simulation to evaluate crowding risk and capacity buffers.</p>
+            </div>
+          </div>
+        </section>
+        <section class="page-panel panel" data-pages="occupancy" id="occupancyPage">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">APC & CAPACITY INTELLIGENCE</p>
+              <h2>Stop-level passenger conservation</h2>
+            </div>
+            <span class="horizon-badge">APC / AFC Verification</span>
+          </div>
+          <p class="page-lead">Inspect passenger loads calculated via conservation: <code>Load_n = Load_{n-1} + Boardings - Alightings</code>.</p>
+          <div class="split-view">
+            <div class="input-card">
+              <h3>Query trip occupancy</h3>
+              <div style="display:flex; gap:0.5rem; margin-bottom: 1rem;">
+                <input id="occTripInput" type="text" placeholder="Trip ID (e.g. T-1001)" />
+                <button id="loadTripOccButton" class="button button-primary" type="button">Inspect</button>
+              </div>
+              <h3>Or check route peak capacity</h3>
+              <div style="display:flex; gap:0.5rem;">
+                <input id="occRouteInput" type="text" placeholder="Route ID (e.g. 1)" />
+                <button id="loadRouteOccButton" class="button button-quiet" type="button">Check</button>
+              </div>
+              <div class="summary-cards" style="margin-top: 1rem;">
+                <article><small>Peak Load</small><strong id="occPeakLoad">—</strong></article>
+                <article><small>Vehicle Cap</small><strong id="occVehicleCap">—</strong></article>
+                <article><small>Peak Util</small><strong id="occPeakUtil">—</strong></article>
+              </div>
+              <div style="margin-top: 0.75rem;"><span id="occConfidenceBadge" class="status-badge" style="background:#f1f5f9; color:#475569; padding:0.25rem 0.5rem; border-radius:4px; font-weight:bold;">No query loaded</span></div>
+            </div>
+            <div class="detail-card">
+              <h3>Stop-by-stop passenger load</h3>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr><th>SEQ</th><th>STOP</th><th>ONS</th><th>OFFS</th><th>LOAD</th><th>UTIL</th></tr>
+                  </thead>
+                  <tbody id="occStopsTableBody">
+                    <tr><td colspan="6" class="empty-row">Query a trip ID to view stop-by-stop passenger conservation.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
         <section class="page-panel panel" data-pages="data" id="dataPage">
           <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
           <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
@@ -335,9 +414,9 @@ Content-Type: application/json
           <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>
         </section>
-        <section class="bottom-strip" data-pages="overview forecasts routes network operations data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
+        <section class="bottom-strip" data-pages="overview forecasts routes network operations planner occupancy data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
       </main>
-      <footer data-pages="overview forecasts routes network operations data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
+      <footer data-pages="overview forecasts routes network operations planner occupancy data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
