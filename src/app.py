@@ -1476,7 +1476,12 @@ def upload_gtfs(file: UploadFile = File(...), principal: security.Principal = De
     try:
         security.inspect_zip_payload(contents, max_bytes=MAX_UPLOAD_BYTES)
     except security.InputValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.detail) from exc
+        # Keep malformed archives on the same structured validation contract
+        # as GTFS content errors returned by parse_feed().
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "Invalid GTFS upload", "issues": [exc.detail]},
+        ) from exc
     checksum = hashlib.sha256(contents).hexdigest()
     try:
         with session_scope() as session:

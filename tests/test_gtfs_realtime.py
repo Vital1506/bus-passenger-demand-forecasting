@@ -1,24 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
-from pathlib import Path
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-import json
-from sqlalchemy import func, select
-
-_saved_env = {name: os.environ.get(name) for name in ('DATABASE_URL', 'BUS_FORECAST_DATA_DIR')}
-os.environ.pop('DATABASE_URL', None)
-_tmpdir = Path(tempfile.mkdtemp(prefix='db-realtime-'))
-os.environ['BUS_FORECAST_DATA_DIR'] = str(_tmpdir)
+from sqlalchemy import func, inspect, select
 
 from src import db as _db
-_db.reset_engine()
-from src.db_admin import upgrade_database
-upgrade_database()
 from src.db import session_scope
+from src.db_admin import upgrade_database
 from src.schema import (
     GtfsRealtimeFeedSource,
     GtfsRealtimePoll,
@@ -27,6 +20,47 @@ from src.schema import (
     GtfsRealtimeServiceAlert,
     is_realtime_payload_kind,
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def isolated_realtime_database():
+    """Keep realtime tests on the same isolated DB they explicitly migrate.
+
+    Do not mutate process environment during module collection: pytest imports
+    all test modules before executing tests, so those changes can leak into or
+    be overwritten by other modules' setup/teardown methods.
+    """
+    saved_env = {
+        name: os.environ.get(name)
+        for name in ("DATABASE_URL", "BUS_FORECAST_DATA_DIR")
+    }
+    temp_dir = Path(tempfile.mkdtemp(prefix="db-realtime-"))
+    try:
+        os.environ.pop("DATABASE_URL", None)
+        os.environ["BUS_FORECAST_DATA_DIR"] = str(temp_dir)
+        _db.reset_engine()
+        migration = upgrade_database()
+        assert not migration.get("pending"), migration
+
+        expected_tables = {
+            "gtfs_realtime_feed_sources",
+            "gtfs_realtime_poll_attempts",
+            "gtfs_realtime_vehicle_positions",
+            "gtfs_realtime_trip_updates",
+            "gtfs_realtime_service_alerts",
+        }
+        actual_tables = set(inspect(_db.get_engine()).get_table_names())
+        missing_tables = expected_tables - actual_tables
+        assert not missing_tables, f"Realtime migration did not create tables: {sorted(missing_tables)}"
+        yield
+    finally:
+        _db.reset_engine()
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        _db.reset_engine()
 
 
 def _dt(value):
