@@ -20,7 +20,7 @@ from .modeling import build_model, recursive_forecast, seasonal_naive_forecast
 
 COMPARISON_METRIC = "wape"
 MIN_WAPE_IMPROVEMENT = 0.0005
-_DEFAULT_CANDIDATES: dict[str, dict[str, str]] = {
+_CANDIDATE_REGISTRY = {
     "hist_gradient_boosting": {
         "label": "HistGradientBoostingRegressor",
         "notes": "Existing operational model; retained as an experimental candidate in comparisons.",
@@ -31,20 +31,17 @@ _DEFAULT_CANDIDATES: dict[str, dict[str, str]] = {
     },
 }
 _MIN_SELECTION_BLOCK_DAYS = 90
-_MIN_HOLDOUT_BLOCK_DAYS = 7
 _NEW_ROUTE_COLD_START_NEEDS_SUPERVISED_HISTORY = (
     "New-route cold-start forecasting needs separate logic and is not handled here"
 )
 
 
-def _candidate_builders() -> dict[str, tuple[str, object]]:
+def _candidate_builders():
     """Declared candidate models available for comparison.
 
     Each candidate is built from scratch inside the comparison so the comparison
     is reproducible and does not reuse an externally fitted model.
     """
-    from sklearn.ensemble import RandomForestRegressor
-
     return {
         "hist_gradient_boosting": (
             "HistGradientBoostingRegressor",
@@ -52,43 +49,38 @@ def _candidate_builders() -> dict[str, tuple[str, object]]:
         ),
         "random_forest": (
             "RandomForestRegressor (experimental)",
-            _random_forest_model(),
+            _rf_pipeline(),
         ),
     }
 
 
-def _random_forest_model():
+def _rf_pipeline():
     from sklearn.compose import ColumnTransformer
     from sklearn.ensemble import RandomForestRegressor
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import OneHotEncoder
 
-    preprocessing = ColumnTransformer(
-        [("route", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["route_id"])],
-        remainder="passthrough",
-        verbose_feature_names_out=False,
-    )
-    regressor = RandomForestRegressor(
-        n_estimators=300,
-        max_leaf_nodes=15,
-        min_samples_leaf=4,
-        random_state=42,
-        n_jobs=1,
-    )
-    return Pipeline([("features", preprocessing), ("model", regressor)])
+    return Pipeline([
+        ("features", ColumnTransformer(
+            [("route", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["route_id"])],
+            remainder="passthrough",
+            verbose_feature_names_out=False,
+        )),
+        ("model", RandomForestRegressor(
+            n_estimators=300,
+            max_leaf_nodes=15,
+            min_samples_leaf=4,
+            random_state=42,
+            n_jobs=1,
+        )),
+    ])
 
 
 def _fit_candidate(builder, supervised, feature_columns):
-    model = builder.fit(supervised[feature_columns], supervised["passengers"])
-    return model
+    return builder.fit(supervised[feature_columns], supervised["passengers"])
 
 
-def _evaluate_on_block(
-    model,
-    train_history,
-    holdout,
-    horizon,
-):
+def _evaluate_on_block(model, train_history, holdout, horizon):
     predicted = recursive_forecast(model, train_history, horizon)
     scored = holdout.merge(
         predicted,
@@ -190,69 +182,58 @@ def compare_models(
     candidates = _candidate_names(candidates)
 
     training_start, training_end, holdout_start, holdout_end = _comparison_cutoffs(history, horizon)
-    train_history = history[(history["service_date"] >= training_start) & (history["service_date"] <= training_end)].copy()
-    holdout = history[(history["service_date"] >= holdout_start) & (history["service_date"] <= holdout_end)].copy()
+    train_history = history.loc[
+        (history["service_date"] >= training_start) & (history["service_date"] <= training_end)
+    ].copy()
+    holdout = history.loc[
+        (history["service_date"] >= holdout_start) & (history["service_date"] <= holdout_end)
+    ].copy()
 
-    if set(holdout["route_id"]) - set(train_history["route_id"]):
-        missing = sorted(set(holdout["route_id"]) - set(train_history["route_id"]))
+    holdout_routes = set(holdout["route_id"])
+    if missing_holdout_routes := holdout_routes - set(train_history["route_id"]):
         raise ValueError(
             "Not enough data for comparison. Routes in the holdout block were not "
-            f"present during the comparison training block: {missing}. "
+            f"present during the comparison training block: {sorted(missing_holdout_routes)}. "
             f"{_NEW_ROUTE_COLD_START_NEEDS_SUPERVISED_HISTORY}."
         )
 
     supervised = add_features(train_history).dropna(subset=FEATURE_COLUMNS)
     trained_routes = set(supervised["route_id"].astype(str))
-    untrained = set(holdout["route_id"].astype(str)) - trained_routes
-    if untrained:
-        missing = sorted(untrained)
+    if missing_supervised_routes := holdout_routes - trained_routes:
         raise ValueError(
             "Not enough data for comparison. Routes in the holdout block lack sufficient "
-            f"pre-holdout supervision: {missing}. "
+            f"pre-holdout supervision: {sorted(missing_supervised_routes)}. "
             f"{_NEW_ROUTE_COLD_START_NEEDS_SUPERVISED_HISTORY}."
         )
 
     builders = _candidate_builders()
     selected_builders = {name: builders[name] for name in candidates if name in builders}
-    if set(candidates) - set(selected_builders):
-        unknown = sorted(set(candidates) - set(selected_builders))
+    if unknown := sorted(set(candidates) - set(selected_builders)):
         raise ValueError(f"Unknown comparison candidates: {unknown}")
 
-    candidate_results: dict[str, dict[str, float]] = {}
-    fitted = {}
+    candidate_results = {}
 
     for name in candidates:
-        builder = selected_builders[name][1]
-        model = _fit_candidate(builder, supervised, FEATURE_COLUMNS)
+        model = _fit_candidate(selected_builders[name][1], supervised, FEATURE_COLUMNS)
         scored = _evaluate_on_block(model, train_history, holdout, horizon)
-        metrics = _holdout_metrics(scored, "predicted_passengers")
-        candidate_results[name] = metrics
-        fitted[name] = (model, metrics)
+        candidate_results[name] = _holdout_metrics(scored, "predicted_passengers")
 
     baseline_scored = _evaluate_baseline(train_history, holdout, horizon)
     baseline_metrics = _holdout_metrics(baseline_scored, "baseline")
 
-    all_results = {**candidate_results, "seasonal_naive": baseline_metrics}
-    ranking = sorted(all_results.items(), key=lambda item: item[1][metric])
+    measured = {**candidate_results, "seasonal_naive": baseline_metrics}
+    ranking = sorted(measured.items(), key=lambda item: item[1][metric])
+    baseline_score = baseline_metrics[metric]
     best_non_baseline = next(
         ((name, candidate_results[name][metric]) for name in candidates if name != "seasonal_naive"),
         None,
     )
-    baseline_score = baseline_metrics[metric]
 
     preferred = None
     if best_non_baseline is not None:
         name, score = best_non_baseline
         if baseline_score - score >= MIN_WAPE_IMPROVEMENT:
             preferred = name
-
-    decision_note = _decision_note(
-        preferred=preferred,
-        baseline_name="seasonal_naive",
-        baseline_score=baseline_score,
-        best_non_baseline=best_non_baseline,
-        metric=metric,
-    )
 
     return {
         "comparison_metric": metric,
@@ -262,17 +243,16 @@ def compare_models(
         "holdout_start": holdout_start.date().isoformat(),
         "holdout_end": holdout_end.date().isoformat(),
         "routes_evaluated": sorted(routes),
-        "baseline": {
-            "name": "seasonal_naive",
-            "metric": baseline_metrics,
-        },
-        "candidates": {
-            name: {"metric": candidate_results[name]}
-            for name in candidates
-        },
+        "baseline": {"name": "seasonal_naive", "metric": baseline_metrics},
+        "candidates": {name: {"metric": candidate_results[name]} for name in candidates},
         "ranking_by_wape": [name for name, _ in ranking],
         "preferred_over_baseline": preferred,
-        "decision_note": decision_note,
+        "decision_note": _decision_note(
+            preferred=preferred,
+            baseline_score=baseline_score,
+            best_non_baseline=best_non_baseline,
+            metric=metric,
+        ),
     }
 
 
@@ -289,11 +269,10 @@ def _evaluate_baseline(train_history, holdout, horizon):
 
 
 def _candidate_names(candidates):
-    candidates = set(candidates) if candidates else set(_DEFAULT_CANDIDATES)
-    return sorted(candidates)
+    return sorted(set(candidates) if candidates else set(_CANDIDATE_REGISTRY))
 
 
-def _decision_note(preferred, baseline_name, baseline_score, best_non_baseline, metric):
+def _decision_note(preferred, baseline_score, best_non_baseline, metric):
     if preferred:
         name, score = best_non_baseline
         return (
@@ -324,4 +303,4 @@ def _decision_note(preferred, baseline_name, baseline_score, best_non_baseline, 
 
 def candidate_registry():
     """Public read-only view of declared comparison candidates."""
-    return {name: dict(**info) for name, info in _DEFAULT_CANDIDATES.items()}
+    return {name: dict(**info) for name, info in _CANDIDATE_REGISTRY.items()}

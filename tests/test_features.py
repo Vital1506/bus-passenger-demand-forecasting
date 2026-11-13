@@ -16,9 +16,7 @@ from src.features import (
     _attach_historical_passenger_features,
     _attach_route_specific_features,
     _attach_calendar_features,
-    _validate_holiday_catalog,
-    _validate_school_holiday_calendar,
-    _validate_event_catalog,
+    _validate_catalog,
     build_feature_frame,
     calendar_features_for_dates,
     extended_feature_columns,
@@ -170,14 +168,18 @@ class TestHolidayContract(unittest.TestCase):
     def test_holiday_catalog_requires_expected_columns(self):
         bad = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=3)})
         with self.assertRaisesRegex(ValueError, "missing columns"):
-            _validate_holiday_catalog(bad)
+            _validate_catalog(bad, columns=["service_date", "route_id", "holiday_type", "name"], route_column="route_id")
 
     def test_holiday_catalog_accepts_valid_rows(self):
         catalog = pd.DataFrame([
             {"service_date": pd.Timestamp("2025-01-01"), "route_id": "R1", "holiday_type": "public", "name": "New Year"},
             {"service_date": pd.Timestamp("2025-07-04"), "route_id": "R1", "holiday_type": "public", "name": "Independence Day"},
         ])
-        validated = _validate_holiday_catalog(catalog)
+        validated = _validate_catalog(
+            catalog,
+            columns=["service_date", "route_id", "holiday_type", "name"],
+            route_column="route_id",
+        )
         self.assertIn("service_date", validated.columns)
         self.assertIn("holiday_type", validated.columns)
 
@@ -203,7 +205,7 @@ class TestSchoolHolidayContract(unittest.TestCase):
     def test_school_holiday_calendar_requires_expected_columns(self):
         bad = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=3)})
         with self.assertRaisesRegex(ValueError, "missing columns"):
-            _validate_school_holiday_calendar(bad)
+            _validate_catalog(bad, columns=["service_date", "school_holiday"], route_column=None)
 
     def test_school_holiday_flag_attached_only_when_present(self):
         rows = []
@@ -224,7 +226,7 @@ class TestEventContract(unittest.TestCase):
     def test_event_catalog_requires_expected_columns(self):
         bad = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=3)})
         with self.assertRaisesRegex(ValueError, "missing columns"):
-            _validate_event_catalog(bad)
+            _validate_catalog(bad, columns=["service_date", "route_id", "event_type", "event_label", "event_intensity"], route_column="route_id")
 
     def test_event_flag_attached_only_when_present(self):
         rows = [{"service_date": pd.Timestamp("2025-01-01") + pd.Timedelta(days=day), "route_id": "R1", "passengers": float(100 + day)} for day in range(14)]

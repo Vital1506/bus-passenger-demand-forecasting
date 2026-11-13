@@ -56,7 +56,6 @@ from .forecasting import REQUIRED_COLUMNS
 # ---------------------------------------------------------------------------
 
 
-
 class UnsupportedWeatherAdapterError(ValueError):
     """Raised when a weather adapter does not implement the contract expected here."""
 
@@ -101,7 +100,7 @@ class WeatherAdapter:
         route_id: str,
         forecast_issue_date: pd.Timestamp,
         target_service_date: pd.Timestamp,
-    ) -> WeatherForecastRow | None:
+    ) -> dict | None:
         """Return the forecast that was available on forecast_issue_date for
         target_service_date, or None if no such forecast exists.
 
@@ -117,68 +116,54 @@ class WeatherAdapter:
         raise NotImplementedError
 
 
-def _expected_holiday_columns() -> list[str]:
-    return ["service_date", "route_id", "holiday_type", "name"]
+_HOLIDAY_COLUMNS = ["service_date", "route_id", "holiday_type", "name"]
+_SCHOOL_HOLIDAY_COLUMNS = ["service_date", "school_holiday"]
+_EVENT_COLUMNS = ["service_date", "route_id", "event_type", "event_label", "event_intensity"]
 
 
-def _expected_school_holiday_columns() -> list[str]:
-    return ["service_date", "school_holiday"]
+def _normalize_date_column(frame: pd.DataFrame, column: str) -> pd.DataFrame:
+    frame[column] = pd.to_datetime(frame[column], errors="coerce").dt.normalize()
+    if frame[column].isna().any():
+        raise ValueError(f"{column} contains invalid date values")
+    return frame
 
 
-def _expected_event_columns() -> list[str]:
-    return ["service_date", "route_id", "event_type", "event_label", "event_intensity"]
+def _validate_catalog(
+    catalog: pd.DataFrame | None,
+    *,
+    columns: list[str],
+    route_column: str | None = None,
+) -> pd.DataFrame:
+    if catalog is None or catalog.empty:
+        return pd.DataFrame(columns=columns)
+    missing = set(columns) - set(catalog.columns)
+    if missing:
+        raise ValueError(f"Catalog is missing columns: {', '.join(sorted(missing))}")
+    frame = catalog.copy()
+    frame = _normalize_date_column(frame, "service_date")
+    if "route_id" in frame.columns:
+        frame["route_id"] = frame["route_id"].astype(str)
+    if frame.empty:
+        return frame
+    if route_column:
+        dupes = frame.duplicated(subset=["service_date", route_column])
+    else:
+        dupes = frame.duplicated(subset=["service_date"])
+    if dupes.any():
+        raise ValueError(f"Catalog contains duplicate rows on service_date/route_id")
+    return frame
 
 
 def _validate_holiday_catalog(catalog: pd.DataFrame | None) -> pd.DataFrame:
-    if catalog is None or catalog.empty:
-        return pd.DataFrame(columns=_expected_holiday_columns())
-    missing = set(_expected_holiday_columns()) - set(catalog.columns)
-    if missing:
-        raise ValueError(f"Holiday catalog is missing columns: {', '.join(sorted(missing))}")
-    frame = catalog.copy()
-    frame["service_date"] = pd.to_datetime(frame["service_date"], errors="coerce").dt.normalize()
-    frame["route_id"] = frame["route_id"].astype(str)
-    bad = frame["service_date"].isna()
-    if bad.any():
-        raise ValueError("Holiday catalog contains invalid service_date values")
-    if frame.empty:
-        return frame
-    if frame.duplicated(subset=["service_date", "route_id"]).any():
-        raise ValueError("Holiday catalog contains duplicate service_date/route_id rows")
-    return frame
+    return _validate_catalog(catalog, columns=_HOLIDAY_COLUMNS, route_column="route_id")
 
 
 def _validate_school_holiday_calendar(calendar: pd.DataFrame | None) -> pd.DataFrame:
-    if calendar is None or calendar.empty:
-        return pd.DataFrame(columns=_expected_school_holiday_columns())
-    missing = set(_expected_school_holiday_columns()) - set(calendar.columns)
-    if missing:
-        raise ValueError(f"School holiday calendar is missing columns: {', '.join(sorted(missing))}")
-    frame = calendar.copy()
-    frame["service_date"] = pd.to_datetime(frame["service_date"], errors="coerce").dt.normalize()
-    bad = frame["service_date"].isna()
-    if bad.any():
-        raise ValueError("School holiday calendar contains invalid service_date values")
-    if frame.duplicated(subset=["service_date"]).any():
-        raise ValueError("School holiday calendar contains duplicate service_date rows")
-    return frame
+    return _validate_catalog(calendar, columns=_SCHOOL_HOLIDAY_COLUMNS, route_column=None)
 
 
 def _validate_event_catalog(catalog: pd.DataFrame | None) -> pd.DataFrame:
-    if catalog is None or catalog.empty:
-        return pd.DataFrame(columns=_expected_event_columns())
-    missing = set(_expected_event_columns()) - set(catalog.columns)
-    if missing:
-        raise ValueError(f"Event catalog is missing columns: {', '.join(sorted(missing))}")
-    frame = catalog.copy()
-    frame["service_date"] = pd.to_datetime(frame["service_date"], errors="coerce").dt.normalize()
-    frame["route_id"] = frame["route_id"].astype(str)
-    bad = frame["service_date"].isna()
-    if bad.any():
-        raise ValueError("Event catalog contains invalid service_date values")
-    if frame.duplicated(subset=["service_date", "route_id"]).any():
-        raise ValueError("Event catalog contains duplicate service_date/route_id rows")
-    return frame
+    return _validate_catalog(catalog, columns=_EVENT_COLUMNS, route_column="route_id")
 
 
 # ---------------------------------------------------------------------------
@@ -314,14 +299,11 @@ def _attach_holiday_features(frame: pd.DataFrame, holidays: pd.DataFrame) -> pd.
         frame["is_holiday"] = 0
         return frame
 
-    lookup = holidays.set_index(["service_date", "route_id"])["holiday_type"]
-    frame["holiday_type"] = frame.set_index(["service_date", "route_id"]).index.map(
-        lambda key: lookup.get(key, "__unknown__")
-    ).astype(str)
-    name_lookup = holidays.set_index(["service_date", "route_id"])["name"]
-    frame["holiday_name"] = frame.set_index(["service_date", "route_id"]).index.map(
-        lambda key: name_lookup.get(key, "__unknown__")
-    ).astype(str)
+    keys = frame.set_index(["service_date", "route_id"]).index
+    holiday_type = holidays.set_index(["service_date", "route_id"])["holiday_type"]
+    holiday_name = holidays.set_index(["service_date", "route_id"])["name"]
+    frame["holiday_type"] = keys.map(lambda key: holiday_type.get(key, "__unknown__")).astype(str)
+    frame["holiday_name"] = keys.map(lambda key: holiday_name.get(key, "__unknown__")).astype(str)
     frame["is_holiday"] = (frame["holiday_type"] != "__unknown__").astype(int)
     return frame
 
@@ -377,18 +359,20 @@ def _attach_weather_features(
     if weather_issue_date is None:
         raise ValueError("weather_issue_date is required when weather_adapter is provided")
 
+    issue = pd.Timestamp(weather_issue_date)
     frame["temperature"] = np.nan
     frame["rain_mm"] = np.nan
     frame["weather_condition"] = "__unknown__"
-    frame["weather_source"] = weather_adapter.name if hasattr(weather_adapter, "name") else "__unknown__"
+    adapter_name = getattr(weather_adapter, "name", None)
+    frame["weather_source"] = adapter_name if adapter_name else "__unknown__"
 
     for idx, row in frame.iterrows():
-        target = row["service_date"]
+        target = pd.Timestamp(row["service_date"])
         try:
             forecast = weather_adapter.forecast_available_on(
                 route_id=row["route_id"],
-                forecast_issue_date=pd.Timestamp(weather_issue_date),
-                target_service_date=pd.Timestamp(target),
+                forecast_issue_date=issue,
+                target_service_date=target,
             )
         except Exception as exc:
             raise ValueError(
