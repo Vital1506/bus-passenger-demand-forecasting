@@ -21,19 +21,31 @@ from src.db.models import (
     SourceMetadata,
 )
 from src.db.repository import (
+    acknowledge_operational_alert_in_db,
+    complete_import_job,
+    create_import_job,
+    get_agencies,
     get_daily_counts_df,
     get_daily_counts_summary,
     get_monthly_observations,
     get_monthly_route_history,
     get_monthly_routes_summary,
     get_monthly_store_status,
+    get_operational_alerts_from_db,
     get_recent_audit_events,
+    get_vehicle_capacity,
     read_source_metadata,
     record_audit_event,
+    record_forecast_run,
     record_monthly_import_event,
+    record_operational_alert_in_db,
     replace_all_daily_counts,
+    upsert_agency,
     upsert_daily_counts,
     upsert_monthly_records,
+    upsert_stop_observations,
+    upsert_trip_observations,
+    upsert_vehicle,
     write_source_metadata,
 )
 from src.db.session import (
@@ -324,3 +336,166 @@ def test_database_endpoints_and_handlers(tmp_path, monkeypatch):
     assert "/api/storage/health" in route_paths
     assert "/api/db/migrations" in route_paths
 
+
+def test_enterprise_agency_and_vehicle_repository(memory_db):
+    session, _ = memory_db
+    # 1. Upsert agency
+    agency = upsert_agency(session, agency_id="CTA", agency_name="Chicago Transit Authority", timezone_str="America/Chicago")
+    session.commit()
+    assert agency.agency_id == "CTA"
+
+    agencies = get_agencies(session)
+    assert len(agencies) == 1
+    assert agencies[0]["agency_id"] == "CTA"
+    assert agencies[0]["timezone"] == "America/Chicago"
+
+    # 2. Upsert vehicle
+    vehicle = upsert_vehicle(
+        session,
+        agency_id="CTA",
+        vehicle_id="BUS-5001",
+        label="5001 - New Flyer",
+        seated_capacity=42,
+        standing_capacity=18,
+        total_capacity=60,
+    )
+    session.commit()
+    assert vehicle.vehicle_id == "BUS-5001"
+
+    capacity = get_vehicle_capacity(session, "CTA", "BUS-5001")
+    assert capacity["seated_capacity"] == 42
+    assert capacity["standing_capacity"] == 18
+    assert capacity["total_capacity"] == 60
+
+
+def test_enterprise_trip_and_stop_observations_repository(memory_db):
+    session, _ = memory_db
+    trip_data = [
+        {
+            "trip_id": "TRIP-01",
+            "route_id": "R1",
+            "vehicle_id": "V-101",
+            "service_date": "2026-11-13",
+            "total_boardings": 35,
+            "total_alightings": 32,
+        }
+    ]
+    ins, upd = upsert_trip_observations(session, trip_data, agency_id="CTA")
+    assert ins == 1
+    assert upd == 0
+    session.commit()
+
+    # Re-insert with updated boardings
+    trip_data[0]["total_boardings"] = 40
+    ins, upd = upsert_trip_observations(session, trip_data, agency_id="CTA")
+    assert ins == 0
+    assert upd == 1
+    session.commit()
+
+    # Stop observations
+    stop_data = [
+        {
+            "route_id": "R1",
+            "trip_id": "TRIP-01",
+            "stop_id": "ST-01",
+            "stop_sequence": 1,
+            "boardings": 12,
+            "alightings": 0,
+            "onboard_occupancy": 12,
+            "vehicle_id": "V-101",
+        },
+        {
+            "route_id": "R1",
+            "trip_id": "TRIP-01",
+            "stop_id": "ST-02",
+            "stop_sequence": 2,
+            "boardings": 8,
+            "alightings": 4,
+            "onboard_occupancy": 16,
+            "vehicle_id": "V-101",
+        },
+    ]
+    stop_count = upsert_stop_observations(session, stop_data, agency_id="CTA")
+    assert stop_count == 2
+    session.commit()
+
+
+def test_enterprise_forecast_and_alerts_repository(memory_db):
+    session, _ = memory_db
+    forecasts = [
+        {
+            "route_id": "R1",
+            "forecast_date": "2026-11-14",
+            "forecast_horizon_days": 1,
+            "predicted_demand": 2450.0,
+            "lower_bound": 2200.0,
+            "upper_bound": 2700.0,
+            "model_version": "v3-test",
+        }
+    ]
+    fc_count = record_forecast_run(session, forecasts, agency_id="CTA")
+    assert fc_count == 1
+    session.commit()
+
+    # Operational alert
+    alert = record_operational_alert_in_db(
+        session,
+        {
+            "alert_id": "ALT-9001",
+            "anomaly_type": "BUNCHING",
+            "severity": "HIGH",
+            "route_id": "R1",
+            "vehicle_ids": ["V-101", "V-102"],
+            "description": "Headway compressed to 90 seconds",
+        },
+        agency_id="CTA",
+    )
+    assert alert.alert_id == "ALT-9001"
+    session.commit()
+
+    alerts = get_operational_alerts_from_db(session, agency_id="CTA")
+    assert len(alerts) == 1
+    assert alerts[0]["alert_id"] == "ALT-9001"
+    assert alerts[0]["acknowledged"] is False
+
+    # Acknowledge
+    ack_res = acknowledge_operational_alert_in_db(session, "ALT-9001", acknowledged_by="dispatcher_dan", agency_id="CTA")
+    assert ack_res is True
+    session.commit()
+
+    alerts_after = get_operational_alerts_from_db(session, agency_id="CTA")
+    assert alerts_after[0]["acknowledged"] is True
+    assert alerts_after[0]["acknowledged_by"] == "dispatcher_dan"
+
+
+def test_enterprise_import_jobs_lifecycle(memory_db):
+    session, _ = memory_db
+    job = create_import_job(
+        session,
+        job_id="JOB-101",
+        job_type="apc_batch",
+        source_filename="apc_20261113.csv",
+        sha256_hash="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        agency_id="CTA",
+    )
+    assert job.status == "RUNNING"
+    session.commit()
+
+    complete_import_job(
+        session,
+        job_id="JOB-101",
+        status="COMPLETED",
+        records_processed=150,
+        records_inserted=140,
+        records_updated=10,
+    )
+    session.commit()
+
+    # Verify completion
+    from src.db.models import ImportJobRecord
+    persisted = session.query(ImportJobRecord).filter_by(job_id="JOB-101").one()
+    assert persisted.status == "COMPLETED"
+    assert persisted.records_processed == 150
+    assert persisted.records_inserted == 140
+    assert persisted.records_updated == 10
+    assert persisted.completed_at_utc is not None

@@ -12,12 +12,21 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from .models import (
+    AgencyRecord,
     DailyPassengerRecord,
     DataAuditEvent,
+    DataSourceRecord,
+    ForecastRecord,
+    ImportJobRecord,
     ModelArtifactRecord,
     MonthlyImportEvent,
     MonthlyPassengerRecord,
+    OperationalAlertRecord,
     SourceMetadata,
+    StopPassengerObservation,
+    TripPassengerObservation,
+    UserAccountRecord,
+    VehicleRecord,
 )
 
 
@@ -528,3 +537,398 @@ def record_monthly_import_event(
         )
     )
     session.flush()
+
+
+# ===========================================================================
+# Enterprise Multi-Agency, Fleet & Observation Repository Functions
+# ===========================================================================
+
+def upsert_agency(
+    session: Session,
+    agency_id: str,
+    agency_name: str,
+    timezone_str: str = "UTC",
+    contact_email: str | None = None,
+) -> AgencyRecord:
+    """Create or update a tenant transit agency."""
+    existing = session.execute(
+        select(AgencyRecord).where(AgencyRecord.agency_id == agency_id)
+    ).scalar_one_or_none()
+
+    now = _utc_now()
+    if existing:
+        existing.agency_name = agency_name
+        existing.timezone = timezone_str
+        existing.contact_email = contact_email
+        existing.updated_at_utc = now
+        session.flush()
+        return existing
+
+    agency = AgencyRecord(
+        agency_id=agency_id,
+        agency_name=agency_name,
+        timezone=timezone_str,
+        contact_email=contact_email,
+        is_active=True,
+        created_at_utc=now,
+        updated_at_utc=now,
+    )
+    session.add(agency)
+    session.flush()
+    return agency
+
+
+def get_agencies(session: Session, active_only: bool = True) -> list[dict[str, Any]]:
+    """List registered transit agencies."""
+    stmt = select(AgencyRecord)
+    if active_only:
+        stmt = stmt.where(AgencyRecord.is_active == True)  # noqa: E712
+    records = session.execute(stmt.order_by(AgencyRecord.agency_name)).scalars().all()
+    return [
+        {
+            "agency_id": a.agency_id,
+            "agency_name": a.agency_name,
+            "timezone": a.timezone,
+            "contact_email": a.contact_email,
+            "is_active": a.is_active,
+            "created_at_utc": a.created_at_utc.isoformat(),
+        }
+        for a in records
+    ]
+
+
+def upsert_vehicle(
+    session: Session,
+    agency_id: str,
+    vehicle_id: str,
+    label: str | None = None,
+    model: str | None = None,
+    seated_capacity: int = 40,
+    standing_capacity: int = 15,
+    total_capacity: int = 55,
+) -> VehicleRecord:
+    """Register or update a vehicle with verified capacities."""
+    existing = session.execute(
+        select(VehicleRecord).where(
+            VehicleRecord.agency_id == agency_id,
+            VehicleRecord.vehicle_id == vehicle_id,
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        existing.label = label or existing.label
+        existing.model = model or existing.model
+        existing.seated_capacity = seated_capacity
+        existing.standing_capacity = standing_capacity
+        existing.total_capacity = total_capacity
+        session.flush()
+        return existing
+
+    vehicle = VehicleRecord(
+        agency_id=agency_id,
+        vehicle_id=vehicle_id,
+        label=label,
+        model=model,
+        seated_capacity=seated_capacity,
+        standing_capacity=standing_capacity,
+        total_capacity=total_capacity,
+        is_active=True,
+        created_at_utc=_utc_now(),
+    )
+    session.add(vehicle)
+    session.flush()
+    return vehicle
+
+
+def get_vehicle_capacity(session: Session, agency_id: str, vehicle_id: str) -> dict[str, int]:
+    """Retrieve verified vehicle capacity configuration."""
+    row = session.execute(
+        select(VehicleRecord).where(
+            VehicleRecord.agency_id == agency_id,
+            VehicleRecord.vehicle_id == vehicle_id,
+        )
+    ).scalar_one_or_none()
+
+    if row:
+        return {
+            "seated_capacity": row.seated_capacity,
+            "standing_capacity": row.standing_capacity,
+            "total_capacity": row.total_capacity,
+        }
+    return {
+        "seated_capacity": 40,
+        "standing_capacity": 15,
+        "total_capacity": 55,
+    }
+
+
+def upsert_trip_observations(
+    session: Session,
+    observations: list[dict[str, Any]],
+    agency_id: str = "default",
+    source_system: str = "apc",
+) -> tuple[int, int]:
+    """Idempotently insert trip-level passenger observations."""
+    if not observations:
+        return 0, 0
+
+    now = _utc_now()
+    inserted = 0
+    updated = 0
+
+    for obs in observations:
+        t_id = str(obs["trip_id"]).strip()
+        s_date = obs["service_date"] if isinstance(obs["service_date"], date) else pd.to_datetime(obs["service_date"]).date()
+
+        existing = session.execute(
+            select(TripPassengerObservation).where(
+                TripPassengerObservation.agency_id == agency_id,
+                TripPassengerObservation.trip_id == t_id,
+                TripPassengerObservation.service_date == s_date,
+                TripPassengerObservation.source_system == source_system,
+            )
+        ).scalar_one_or_none()
+
+        if existing:
+            existing.total_boardings = int(obs.get("total_boardings", 0))
+            existing.total_alightings = int(obs.get("total_alightings", 0))
+            existing.vehicle_id = obs.get("vehicle_id")
+            updated += 1
+        else:
+            new_obs = TripPassengerObservation(
+                agency_id=agency_id,
+                trip_id=t_id,
+                route_id=str(obs["route_id"]).strip(),
+                vehicle_id=obs.get("vehicle_id"),
+                service_date=s_date,
+                total_boardings=int(obs.get("total_boardings", 0)),
+                total_alightings=int(obs.get("total_alightings", 0)),
+                source_system=source_system,
+                created_at_utc=now,
+            )
+            session.add(new_obs)
+            inserted += 1
+
+    session.flush()
+    return inserted, updated
+
+
+def upsert_stop_observations(
+    session: Session,
+    observations: list[dict[str, Any]],
+    agency_id: str = "default",
+    source_system: str = "apc",
+) -> int:
+    """Insert stop-level boarding and alighting observations."""
+    if not observations:
+        return 0
+
+    now = _utc_now()
+    count = 0
+    for obs in observations:
+        ts = obs.get("observation_timestamp_utc")
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        elif not isinstance(ts, datetime):
+            ts = now
+
+        row = StopPassengerObservation(
+            agency_id=agency_id,
+            route_id=str(obs["route_id"]).strip(),
+            trip_id=str(obs["trip_id"]).strip(),
+            stop_id=str(obs["stop_id"]).strip(),
+            stop_sequence=int(obs.get("stop_sequence", 0)),
+            observation_timestamp_utc=ts,
+            boardings=int(obs.get("boardings", 0)),
+            alightings=int(obs.get("alightings", 0)),
+            onboard_occupancy=obs.get("onboard_occupancy"),
+            vehicle_id=obs.get("vehicle_id"),
+            source_system=source_system,
+            created_at_utc=now,
+        )
+        session.add(row)
+        count += 1
+
+    session.flush()
+    return count
+
+
+def record_forecast_run(
+    session: Session,
+    forecasts: list[dict[str, Any]],
+    agency_id: str = "default",
+) -> int:
+    """Persist generated demand forecasts."""
+    if not forecasts:
+        return 0
+
+    now = _utc_now()
+    count = 0
+    for fc in forecasts:
+        f_date = fc["forecast_date"] if isinstance(fc["forecast_date"], date) else pd.to_datetime(fc["forecast_date"]).date()
+        row = ForecastRecord(
+            agency_id=agency_id,
+            route_id=str(fc["route_id"]).strip(),
+            forecast_date=f_date,
+            forecast_horizon_days=int(fc.get("forecast_horizon_days", 1)),
+            predicted_demand=float(fc["predicted_demand"]),
+            lower_bound=float(fc["lower_bound"]) if fc.get("lower_bound") is not None else None,
+            upper_bound=float(fc["upper_bound"]) if fc.get("upper_bound") is not None else None,
+            model_version=str(fc.get("model_version", "v1")),
+            created_at_utc=now,
+        )
+        session.add(row)
+        count += 1
+
+    session.flush()
+    return count
+
+
+def record_operational_alert_in_db(
+    session: Session,
+    alert_dict: dict[str, Any],
+    agency_id: str = "default",
+) -> OperationalAlertRecord:
+    """Save an operational anomaly or dispatch alert to database."""
+    now = _utc_now()
+    alert_id = alert_dict.get("alert_id") or f"ALT-{int(now.timestamp()*1000)}"
+
+    existing = session.execute(
+        select(OperationalAlertRecord).where(
+            OperationalAlertRecord.agency_id == agency_id,
+            OperationalAlertRecord.alert_id == alert_id,
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        return existing
+
+    record = OperationalAlertRecord(
+        agency_id=agency_id,
+        alert_id=alert_id,
+        alert_type=alert_dict.get("anomaly_type") or alert_dict.get("alert_type", "GENERAL"),
+        severity=alert_dict.get("severity", "MEDIUM"),
+        route_id=alert_dict.get("route_id"),
+        trip_id=alert_dict.get("trip_id"),
+        vehicle_id=",".join(alert_dict.get("vehicle_ids", [])) if isinstance(alert_dict.get("vehicle_ids"), list) else alert_dict.get("vehicle_id"),
+        summary=alert_dict.get("description") or alert_dict.get("summary", "Operational alert"),
+        description=alert_dict.get("description"),
+        created_at_utc=now,
+        acknowledged=False,
+        resolved=False,
+    )
+    session.add(record)
+    session.flush()
+    return record
+
+
+def acknowledge_operational_alert_in_db(
+    session: Session,
+    alert_id: str,
+    acknowledged_by: str,
+    agency_id: str = "default",
+) -> bool:
+    """Acknowledge an operational alert."""
+    record = session.execute(
+        select(OperationalAlertRecord).where(
+            OperationalAlertRecord.agency_id == agency_id,
+            OperationalAlertRecord.alert_id == alert_id,
+        )
+    ).scalar_one_or_none()
+
+    if not record:
+        return False
+
+    record.acknowledged = True
+    record.acknowledged_by = acknowledged_by
+    record.acknowledged_at_utc = _utc_now()
+    session.flush()
+    return True
+
+
+def get_operational_alerts_from_db(
+    session: Session,
+    agency_id: str | None = None,
+    limit: int = 100,
+    unresolved_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Query operational alerts from the database."""
+    stmt = select(OperationalAlertRecord)
+    if agency_id:
+        stmt = stmt.where(OperationalAlertRecord.agency_id == agency_id)
+    if unresolved_only:
+        stmt = stmt.where(OperationalAlertRecord.resolved == False)  # noqa: E712
+
+    records = session.execute(
+        stmt.order_by(OperationalAlertRecord.created_at_utc.desc()).limit(limit)
+    ).scalars().all()
+
+    return [
+        {
+            "id": r.id,
+            "agency_id": r.agency_id,
+            "alert_id": r.alert_id,
+            "alert_type": r.alert_type,
+            "severity": r.severity,
+            "route_id": r.route_id,
+            "vehicle_id": r.vehicle_id,
+            "summary": r.summary,
+            "description": r.description,
+            "created_at_utc": r.created_at_utc.isoformat(),
+            "acknowledged": r.acknowledged,
+            "acknowledged_by": r.acknowledged_by,
+            "acknowledged_at_utc": r.acknowledged_at_utc.isoformat() if r.acknowledged_at_utc else None,
+            "resolved": r.resolved,
+        }
+        for r in records
+    ]
+
+
+def create_import_job(
+    session: Session,
+    job_id: str,
+    job_type: str,
+    source_filename: str,
+    sha256_hash: str,
+    agency_id: str = "default",
+) -> ImportJobRecord:
+    """Create a new import job tracking record."""
+    job = ImportJobRecord(
+        agency_id=agency_id,
+        job_id=job_id,
+        job_type=job_type,
+        status="RUNNING",
+        source_filename=source_filename,
+        sha256=sha256_hash,
+        records_processed=0,
+        records_inserted=0,
+        records_updated=0,
+        started_at_utc=_utc_now(),
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
+def complete_import_job(
+    session: Session,
+    job_id: str,
+    status: str,
+    records_processed: int = 0,
+    records_inserted: int = 0,
+    records_updated: int = 0,
+    error_message: str | None = None,
+) -> None:
+    """Mark an import job as completed or failed."""
+    job = session.execute(
+        select(ImportJobRecord).where(ImportJobRecord.job_id == job_id)
+    ).scalar_one_or_none()
+
+    if job:
+        job.status = status
+        job.records_processed = records_processed
+        job.records_inserted = records_inserted
+        job.records_updated = records_updated
+        job.error_message = error_message
+        job.completed_at_utc = _utc_now()
+        session.flush()

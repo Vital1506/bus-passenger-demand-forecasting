@@ -306,3 +306,175 @@ class GTFSShape(Base):
     __table_args__ = (
         Index("ix_gtfs_shapes_shape_seq", "feed_id", "shape_id", "shape_pt_sequence"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Enterprise Transit Entities (Multi-Agency, Fleet Assets & APC Ingestion)
+# ---------------------------------------------------------------------------
+class AgencyRecord(Base):
+    """Core transit agency entity supporting multi-tenant platform isolation."""
+    __tablename__ = "agencies"
+
+    agency_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agency_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class UserAccountRecord(Base):
+    """User accounts with agency-scoped roles."""
+    __tablename__ = "user_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="analyst")  # administrator, operator, analyst
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_login_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class VehicleRecord(Base):
+    """Transit fleet vehicle catalog with verified passenger capacities."""
+    __tablename__ = "vehicles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    vehicle_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    seated_capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    standing_capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    total_capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=55)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("agency_id", "vehicle_id", name="uq_vehicle_agency_id"),
+    )
+
+
+class TripPassengerObservation(Base):
+    """Trip-level APC/AFC passenger boarding and alighting observations."""
+    __tablename__ = "trip_passenger_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    trip_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    route_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    vehicle_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    service_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    start_time_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_time_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_boardings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_alightings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_system: Mapped[str] = mapped_column(String(64), nullable=False, default="apc")
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("agency_id", "trip_id", "service_date", "source_system", name="uq_trip_obs_agency_trip_date"),
+        Index("ix_trip_obs_route_date", "agency_id", "route_id", "service_date"),
+    )
+
+
+class StopPassengerObservation(Base):
+    """Stop-level boarding/alighting observations for passenger conservation tracking."""
+    __tablename__ = "stop_passenger_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    route_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    trip_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    stop_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    stop_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    observation_timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    boardings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    alightings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    onboard_occupancy: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    vehicle_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_system: Mapped[str] = mapped_column(String(64), nullable=False, default="apc")
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_stop_obs_trip_seq", "agency_id", "trip_id", "stop_sequence"),
+        Index("ix_stop_obs_stop_time", "agency_id", "stop_id", "observation_timestamp_utc"),
+    )
+
+
+class ForecastRecord(Base):
+    """Persisted forecast outputs across models and prediction horizons."""
+    __tablename__ = "forecast_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    route_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    forecast_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    forecast_horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    predicted_demand: Mapped[float] = mapped_column(Float, nullable=False)
+    lower_bound: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    upper_bound: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_forecast_agency_route_date", "agency_id", "route_id", "forecast_date"),
+    )
+
+
+class OperationalAlertRecord(Base):
+    """Persisted operational and dispatch alerts with dispatcher acknowledgment."""
+    __tablename__ = "operational_alert_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    alert_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    alert_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # BUNCHING, EXCESSIVE_GAP, OVERCROWDING, etc.
+    severity: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # LOW, MEDIUM, HIGH, CRITICAL
+    route_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    trip_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    vehicle_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    summary: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    acknowledged_by: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    acknowledged_at_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    resolved_at_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DataSourceRecord(Base):
+    """Configured data source feeds."""
+    __tablename__ = "data_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    source_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)  # gtfs_static, gtfs_rt, apc_csv, weather_api
+    feed_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class ImportJobRecord(Base):
+    """Idempotent ingestion job tracking with checksums and status."""
+    __tablename__ = "import_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    job_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    job_type: Mapped[str] = mapped_column(String(64), nullable=False)  # daily_csv, cta_monthly, gtfs_zip, apc_batch
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")  # PENDING, RUNNING, COMPLETED, FAILED
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    records_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    records_inserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    records_updated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -49,6 +49,20 @@ The initial schema (`alembic/versions/13027f25dc62_initial_schema.py`) includes:
 | `gtfs_calendar_dates` | Holiday and exception dates | `(feed_id, service_id, date)` |
 | `gtfs_shapes` | High-fidelity route alignment paths | `(feed_id, shape_id, shape_pt_sequence)` |
 
+The enterprise schema update (`alembic/versions/2a5b8c9d1e2f_enterprise_entities.py`) adds:
+
+| Table | Purpose | Primary Indexes |
+|---|---|---|
+| `agencies` | Tenant transit agency registry | `agency_id` (PK) |
+| `user_accounts` | User credentials and agency roles | `username`, `email`, `agency_id` |
+| `vehicles` | Fleet vehicles and passenger capacity configurations | `(agency_id, vehicle_id)` |
+| `trip_passenger_observations` | Trip-level AFC/APC boardings and alightings | `(agency_id, trip_id, service_date, source_system)` |
+| `stop_passenger_observations` | Stop-level boardings for passenger conservation calculations | `(agency_id, trip_id, stop_sequence)`, `(agency_id, stop_id, observation_timestamp_utc)` |
+| `forecast_records` | Persisted forecast runs with horizons and bounds | `(agency_id, route_id, forecast_date)` |
+| `operational_alert_records` | Persisted operational anomalies and dispatcher acknowledgments | `(agency_id, created_at_utc)`, `alert_id` |
+| `data_sources` | Ingestion source registry and feed configurations | `(agency_id, source_name)` |
+| `import_jobs` | Idempotent ETL job status and audit tracking | `(agency_id, job_id)`, `status` |
+
 ## 4. Running Migrations
 
 To apply database migrations:
@@ -98,3 +112,32 @@ The migration utility:
 | `/api/db/health` | GET | Protected | Latency, dialect, and connection status |
 | `/api/storage/health` | GET | Protected | Disk directory, write permissions, available MB |
 | `/api/db/migrations` | GET | Protected | Initialized status and table availability |
+
+## 7. Backup and Recovery Strategy
+
+### SQLite (Local Development)
+- **Automated Backup:** When `python -m src.db.migrate_files_to_db` runs without `--dry-run`, it automatically creates an atomic archive in `data/backups/pre_migration_<timestamp>/`.
+- **Manual Snapshot:**
+  ```powershell
+  Copy-Item data/transit_intelligence.db data/backups/transit_intelligence_backup.db
+  ```
+- **Recovery:** Stop the application and restore the backup file:
+  ```powershell
+  Copy-Item data/backups/transit_intelligence_backup.db data/transit_intelligence.db
+  ```
+
+### PostgreSQL (Production / Render)
+- **Logical Backup:** Execute `pg_dump` on a cron schedule or before running major schema migrations:
+  ```bash
+  pg_dump "$DATABASE_URL" -Fc -f "/var/backups/transit_db_$(date +%Y%m%d_%H%M%S).dump"
+  ```
+- **Recovery / Rollback:**
+  ```bash
+  # Step 1: Rollback Alembic migration if necessary
+  alembic downgrade -1
+
+  # Step 2: Or restore complete database state
+  pg_restore --clean --if-exists -d "$DATABASE_URL" "/var/backups/transit_db_snapshot.dump"
+  ```
+- **Zero-Loss Re-synchronization:**
+  All historical daily CSV records and CTA monthly datasets remain independently stored. If a database cluster failure occurs, running `python -m src.db.migrate_files_to_db` reconstitutes the entire relational store idempotently.
