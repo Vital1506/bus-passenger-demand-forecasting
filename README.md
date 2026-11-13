@@ -65,6 +65,50 @@ The platform integrates standard General Transit Feed Specification (GTFS Schedu
   - `GET /api/gtfs/stops`: network stops catalog with search and coordinate lookup.
 - **Transit Network Explorer:** accessible in the web dashboard under **Transit Network** to inspect operators, browse routes, review operating hours, view service day badges, preview alignment shapes as responsive vector paths, and inspect ordered stop sequences.
 
+## GTFS-Realtime (GTFS-RT) telemetry engine
+
+The platform ingests live GTFS-Realtime feeds across all three specification standards:
+- **VehiclePositions:** live GPS coordinates, bearing, speed, current status, stop sequence, and occupancy status.
+- **TripUpdates:** real-time delays, schedule adherence, and predicted stop arrival/departure times.
+- **ServiceAlerts:** disruptions, causes, effects, active time spans, and informed transit entities.
+- **Protobuf wire & JSON support:** includes a zero-dependency, streaming binary Protocol Buffers decoder and JSON parser.
+- **Anomaly filtering:** automatic GPS jump/teleportation detection (`> 130 km/h`), invalid coordinate rejection, and stale telemetry timeout pruning.
+- **REST APIs:** `/api/realtime/vehicles`, `/api/realtime/trip-updates`, `/api/realtime/alerts`, `/api/realtime/summary`, and `/api/realtime/demo-snapshot`.
+
+## Hybrid demand forecasting engine
+
+Bridges macroscopic multi-day passenger demand forecasting with real-time intraday operations:
+- **Diurnal transit curve:** standard 24-hour transit demand profile modeling AM peak, midday base, PM peak, and night services.
+- **Live crowding calibration:** integrates real-time vehicle occupancy and downstream queue expansion during transit delays.
+- **Multi-horizon projections:** Next 1 hour, Next 4 hours, and 24-hour diurnal profile with 90% confidence bands.
+- **Graceful fallback:** if live telemetry drops, falls back automatically to scheduled timetable frequency and daily baseline without downtime.
+- **REST APIs:** `/api/forecast/realtime/{route_id}`, `/api/forecast/intraday`.
+
+## Transit operations & dispatch decision support
+
+An automated decision-support system analyzing live fleet telemetry to assist dispatchers and control rooms:
+- **Bus bunching detection:** flags consecutive buses on the same route with headway < 3 minutes or spacing < 600m.
+- **Excessive gap warnings:** flags service gaps > 4 km or > 18 minutes.
+- **Automated dispatch recommendations:** generates holding/spacing instructions at control points, short-turn directives, and standby injections.
+- **Fleet KPIs:** On-Time Performance (OTP), Excess Wait Time (EWT), and Service Regularity Index.
+- **REST APIs:** `/api/operations/alerts`, `/api/operations/dispatch-recommendations`, `/api/operations/metrics`.
+
+## Automated data quality & drift detection
+
+- **Population Stability Index (PSI):** continuous tracking of demand distribution drift between baseline training history and recent operational counts.
+- **Self-healing pipeline:** automatic recommendation or trigger for model retraining when PSI >= 0.25, with fallback to weekday-average baseline.
+- **Data audit logging:** tracks all drift assessments and ingestion events.
+- **REST APIs:** `/api/quality/drift-status`, `/api/quality/audit-logs`, `/api/quality/check-drift`.
+
+## Security, RBAC & operator access control
+
+The platform enforces a three-tier Role-Based Access Control model:
+- **Public / Viewer:** read-only synthetic demo, GTFS static network explorer, public schedules.
+- **Operator:** access to operational forecasts, live vehicle telemetry, dispatch alerts, and daily count uploads (`BUS_FORECAST_OPERATOR_KEY`).
+- **Administrator:** access to model training, GTFS schedule upload, monthly ridership ingestion, database migrations, and drift checks (`BUS_FORECAST_ADMIN_KEY` or unified `BUS_FORECAST_API_KEY`).
+- **Rate limiting:** in-memory sliding-window limiter protecting endpoints from abusive traffic.
+- **REST APIs:** `/api/auth/roles` for caller role and permission inspection.
+
 ## Interface design
 
 The dashboard uses a persistent desktop navigation rail, compact mobile tabs, clear headings, carefully spaced forecast surfaces, responsive route tables, and visible keyboard focus. Its restrained teal and warm-neutral visual system uses color for status and emphasis without making color the only signal. The visual system is informed by [Material Design 3](https://m3.material.io/) and [Carbon's accessible data visualization palettes](https://carbondesignsystem.com/data-visualization/color-palettes/). Status labels accompany their colors, and sample data is clearly identified.
