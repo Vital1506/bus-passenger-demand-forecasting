@@ -17,7 +17,12 @@ async function api(path, options = {}) {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
     const payload = type.includes("json") ? await response.json() : await response.text();
-    if (!response.ok) throw new Error(payload?.message || payload?.detail || payload || `Request failed (${response.status})`);
+    if (!response.ok) {
+      const error = new Error(payload?.message || payload?.detail || (typeof payload === "string" ? payload : "") || `Request failed (${response.status})`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
     return payload;
   } catch (error) {
     if (error?.name === "AbortError") throw new Error("The forecast service took too long to respond. Retry or continue to the dashboard.");
@@ -1411,8 +1416,8 @@ function setupAiAssistant() {
         modelBadge.textContent = res.model || "OpenRouter";
       } else {
         statusDot.classList.remove("active");
-        statusDot.title = "OpenRouter API Key not configured";
-        modelBadge.textContent = "Key Required";
+        statusDot.title = "OpenRouter AI API key is not configured on the backend server";
+        modelBadge.textContent = "AI Key Missing";
       }
     } catch (_) {
       statusDot.classList.remove("active");
@@ -1558,7 +1563,16 @@ function setupAiAssistant() {
       }
     } catch (err) {
       hideTypingIndicator();
-      const msg = err.message || "Failed to communicate with the AI assistant.";
+      let msg = err.message || "Failed to communicate with the AI assistant.";
+      if (err.status === 401) {
+        msg = "Authentication required: If you are an operator, click Settings (⚙️) and enter your API access key.";
+      } else if (err.status === 503 && (msg.includes("OpenRouter") || msg.includes("API_KEY_MISSING") || msg.includes("OPENROUTER_KEY_MISSING"))) {
+        msg = "OpenRouter AI API key is not configured on the backend server. Please add OPENROUTER_API_KEY to your Render environment variables.";
+      } else if (err.status === 503 && (msg.includes("Hosted API authentication") || msg.includes("BUS_FORECAST_API_KEY"))) {
+        msg = "Platform authentication is enabled but BUS_FORECAST_API_KEY is not configured on the server.";
+      } else if (err.status === 429) {
+        msg = "AI Assistant rate limit reached. Please wait a moment before sending another query.";
+      }
       appendMessage("assistant", `⚠️ ${msg}`, true);
     } finally {
       isSubmitting = false;

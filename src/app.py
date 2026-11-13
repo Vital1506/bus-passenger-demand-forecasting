@@ -165,11 +165,74 @@ def authorize(authorization: str | None = Header(default=None)) -> None:
     """Require a configured bearer key on hosted deployments."""
     if os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() not in {"1", "true", "yes"}:
         return
-    expected = os.getenv("BUS_FORECAST_API_KEY")
+    expected = (
+        os.getenv("BUS_FORECAST_API_KEY")
+        or os.getenv("BUS_FORECAST_OPERATOR_KEY")
+        or os.getenv("BUS_FORECAST_ADMIN_KEY")
+    )
     if not expected:
         raise HTTPException(status_code=503, detail="Hosted API authentication is not configured")
     if authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Enter the API access key in app settings")
+
+
+def authorize_ai_chat(authorization: str | None = Header(default=None)) -> UserRole:
+    """Authorize AI chat requests, cleanly separating platform access control from OpenRouter keys.
+
+    1. Public Demo Mode: If unauthenticated (no Bearer token provided), public access is allowed
+       by default (read-only, rate-limited, grounded in transit telemetry).
+    2. Authenticated Operator: Valid Bearer token matching BUS_FORECAST_API_KEY / OPERATOR_KEY.
+    3. Authenticated Admin: Valid Bearer token matching BUS_FORECAST_ADMIN_KEY.
+    4. Invalid Token: If a token is supplied but incorrect, returns 401 Unauthorized.
+    5. Explicit Lockdown: If BUS_FORECAST_REQUIRE_AUTH=true AND BUS_FORECAST_ALLOW_PUBLIC_AI=false,
+       unauthenticated requests receive a 401 prompt to enter the operator access key.
+    """
+    require_auth = os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() in {"1", "true", "yes"}
+    allow_public_ai = os.getenv("BUS_FORECAST_ALLOW_PUBLIC_AI", "true").lower() in {"1", "true", "yes"}
+
+    expected_keys: dict[str, UserRole] = {}
+    for env_var, role in [
+        ("BUS_FORECAST_API_KEY", UserRole.OPERATOR),
+        ("BUS_FORECAST_OPERATOR_KEY", UserRole.OPERATOR),
+        ("BUS_FORECAST_ADMIN_KEY", UserRole.ADMINISTRATOR),
+        ("BUS_FORECAST_ANALYST_KEY", UserRole.ANALYST),
+    ]:
+        val = os.getenv(env_var)
+        if val and val.strip():
+            expected_keys[val.strip()] = role
+
+    token = None
+    if authorization:
+        parts = authorization.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+        elif len(parts) == 1:
+            token = parts[0]
+
+    # If caller supplied a token, validate it
+    if token:
+        if expected_keys and token in expected_keys:
+            return expected_keys[token]
+        if expected_keys:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid API access key. Enter the correct API access key in app settings.",
+            )
+
+    # Unauthenticated caller: check public demo access
+    if not require_auth or allow_public_ai:
+        return UserRole.PUBLIC
+
+    # Public AI disabled and auth required
+    if not expected_keys:
+        raise HTTPException(
+            status_code=503,
+            detail="Hosted API authentication is not configured on the server (BUS_FORECAST_API_KEY missing).",
+        )
+    raise HTTPException(
+        status_code=401,
+        detail="Enter the API access key in app settings to use the AI Copilot.",
+    )
 
 
 def require_public_monthly_read() -> None:
@@ -646,6 +709,8 @@ def upload_monthly_data(
 @app.get("/api/public-demo/status")
 def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
     """Return a cached, read-only synthetic forecast without touching operator data."""
+    if not isinstance(days, int):
+        days = getattr(days, "default", 7)
     global PUBLIC_DEMO_CACHE
     if PUBLIC_DEMO_CACHE is not None:
         return public_demo_forecast_for_days(days)
@@ -702,6 +767,8 @@ def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
 
 def public_demo_forecast_for_days(days: int) -> dict:
     """Return a read-only forecast horizon from the cached synthetic model."""
+    if not isinstance(days, int):
+        days = getattr(days, "default", 7)
     if PUBLIC_DEMO_CACHE is None:
         raise HTTPException(status_code=503, detail="The synthetic demo model is not ready")
     if days == PUBLIC_DEMO_CACHE["horizon_days"]:
@@ -1485,8 +1552,8 @@ async def ai_chat(
     authorization: str | None = Header(default=None),
 ) -> Any:
     """Conversational AI assistant grounded in real transit demand telemetry."""
-    # Check authorization if hosted deployment requires authentication
-    authorize(authorization)
+    # Check platform authorization (supports public demo mode with rate limiting)
+    role = authorize_ai_chat(authorization)
 
     from .ai_assistant import process_chat_message
 
@@ -1495,13 +1562,14 @@ async def ai_chat(
         user_message=payload.message,
         history=payload.history,
         route_id=payload.route_id,
-        client_id=client_id,
+        client_id=f"{role.value}:{client_id}",
         data_dir=DATA_DIR,
     )
 
     if result.get("status") == "error":
         status_code_map = {
             "API_KEY_MISSING": 503,
+            "OPENROUTER_KEY_MISSING": 503,
             "INVALID_API_KEY": 401,
             "CLIENT_RATE_LIMIT": 429,
             "RATE_LIMIT_EXCEEDED": 429,
@@ -1513,6 +1581,7 @@ async def ai_chat(
         code = status_code_map.get(result.get("error_code"), 500)
         return JSONResponse(status_code=code, content=result)
 
+    result["role"] = role.value
     return result
 
 

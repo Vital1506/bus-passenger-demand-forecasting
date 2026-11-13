@@ -94,6 +94,7 @@ def extract_system_context(
 
     Grounded strictly in verified local artifacts and data stores.
     """
+    explicit_dir = data_dir is not None
     if data_dir is None:
         data_dir = Path(os.getenv("BUS_FORECAST_DATA_DIR", "data"))
     else:
@@ -120,6 +121,10 @@ def extract_system_context(
     daily_csv = data_dir / "daily_ridership.csv"
     if not daily_csv.exists():
         daily_csv = data_dir / "sample_daily_ridership.csv"
+    if not daily_csv.exists() and not explicit_dir:
+        bundled = Path(__file__).resolve().parent.parent / "data" / "sample_daily_ridership.csv"
+        if bundled.exists():
+            daily_csv = bundled
 
     if daily_csv.exists():
         try:
@@ -242,6 +247,73 @@ def extract_system_context(
                     break
             except Exception as exc:
                 logger.warning("Could not parse forecast.csv: %s", exc)
+
+    # 4. Fallback to public demo cache if no operator forecast file exists on disk
+    if not context["forecast_available"]:
+        try:
+            import sys
+            app_mod = sys.modules.get("src.app")
+            if app_mod:
+                cache = getattr(app_mod, "PUBLIC_DEMO_CACHE", None)
+                if cache and isinstance(cache, dict) and cache.get("forecasts"):
+                    fdf = pd.DataFrame(cache["forecasts"])
+                    if "service_date" in fdf.columns and "predicted_passengers" in fdf.columns and "route_id" in fdf.columns:
+                        context["forecast_available"] = True
+                        fdf["service_date"] = fdf["service_date"].astype(str)
+                        dates = sorted(fdf["service_date"].unique().tolist())
+                        context["forecast_dates"] = dates
+
+                        route_totals = (
+                            fdf.groupby("route_id")["predicted_passengers"]
+                            .mean()
+                            .round(1)
+                            .sort_values(ascending=False)
+                        )
+                        context["busiest_routes_forecast"] = [
+                            {"route_id": str(r), "avg_daily_demand": float(v)}
+                            for r, v in route_totals.head(5).items()
+                        ]
+                        context["lowest_routes_forecast"] = [
+                            {"route_id": str(r), "avg_daily_demand": float(v)}
+                            for r, v in route_totals.tail(5).items()
+                        ]
+
+                        if dates:
+                            earliest_date = dates[0]
+                            day_slice = fdf[fdf["service_date"] == earliest_date]
+                            total_pax = float(day_slice["predicted_passengers"].sum().round(1))
+                            top_day_routes = [
+                                {
+                                    "route_id": str(row["route_id"]),
+                                    "predicted_demand": float(row["predicted_passengers"]),
+                                    "lower_90": float(row.get("lower_90_approx", row["predicted_passengers"])),
+                                    "upper_90": float(row.get("upper_90_approx", row["predicted_passengers"])),
+                                }
+                                for _, row in day_slice.sort_values(by="predicted_passengers", ascending=False).head(5).iterrows()
+                            ]
+                            context["next_day_forecast"] = {
+                                "date": earliest_date,
+                                "total_system_predicted_demand": total_pax,
+                                "top_routes": top_day_routes,
+                            }
+
+                        if target_route:
+                            matched = fdf[fdf["route_id"].astype(str) == str(target_route)]
+                            if not matched.empty:
+                                context["route_specific_detail"] = {
+                                    "route_id": str(target_route),
+                                    "daily_predictions": [
+                                        {
+                                            "date": str(row["service_date"]),
+                                            "predicted": float(row["predicted_passengers"]),
+                                            "lower_90": float(row.get("lower_90_approx", row["predicted_passengers"])),
+                                            "upper_90": float(row.get("upper_90_approx", row["predicted_passengers"])),
+                                        }
+                                        for _, row in matched.iterrows()
+                                    ],
+                                }
+        except Exception as exc:
+            logger.debug("Could not inspect PUBLIC_DEMO_CACHE: %s", exc)
 
     return context
 

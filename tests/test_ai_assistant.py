@@ -218,3 +218,119 @@ def test_api_ai_chat_success_mocked():
             assert "Route 9 has the highest demand" in result["reply"]
             assert result["model"] == "openrouter/free"
             assert "sk-or-mock-valid-key" not in str(result)
+
+
+def test_ai_chat_public_demo_allowed_when_auth_required():
+    """Unauthenticated public users can access AI Copilot in public demo mode even when platform auth is enabled."""
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {
+        "model": "openrouter/free",
+        "choices": [{"message": {"role": "assistant", "content": "Public demo: Route 4 has 800 boardings."}}],
+    }
+    with patch.dict(
+        os.environ,
+        {
+            "BUS_FORECAST_REQUIRE_AUTH": "1",
+            "BUS_FORECAST_API_KEY": "operator-secret-key",
+            "BUS_FORECAST_ALLOW_PUBLIC_AI": "true",
+            "OPENROUTER_API_KEY": "sk-or-test-key",
+        },
+    ):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = fake_response
+            payload = AIChatRequest(message="What is the forecast?")
+            result = run_async(ai_chat(payload, DummyRequest(), authorization=None))
+            assert result["status"] == "ok"
+            assert result["role"] == "public"
+
+
+def test_ai_chat_authenticated_operator():
+    """Authenticated operator with valid Bearer token receives role 'operator'."""
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {
+        "model": "openrouter/free",
+        "choices": [{"message": {"role": "assistant", "content": "Operator telemetry confirmed."}}],
+    }
+    with patch.dict(
+        os.environ,
+        {
+            "BUS_FORECAST_REQUIRE_AUTH": "1",
+            "BUS_FORECAST_API_KEY": "operator-secret-key",
+            "OPENROUTER_API_KEY": "sk-or-test-key",
+        },
+    ):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = fake_response
+            payload = AIChatRequest(message="Operator status?")
+            result = run_async(ai_chat(payload, DummyRequest(), authorization="Bearer operator-secret-key"))
+            assert result["status"] == "ok"
+            assert result["role"] == "operator"
+
+
+def test_ai_chat_invalid_operator_key_returns_401():
+    """When a caller provides an invalid Bearer token, return 401."""
+    from fastapi import HTTPException
+    import pytest
+
+    with patch.dict(
+        os.environ,
+        {
+            "BUS_FORECAST_REQUIRE_AUTH": "1",
+            "BUS_FORECAST_API_KEY": "operator-secret-key",
+            "OPENROUTER_API_KEY": "sk-or-test-key",
+        },
+    ):
+        payload = AIChatRequest(message="Hello")
+        with pytest.raises(HTTPException) as exc_info:
+            run_async(ai_chat(payload, DummyRequest(), authorization="Bearer wrong-password"))
+        assert exc_info.value.status_code == 401
+        assert "Invalid API access key" in exc_info.value.detail
+
+
+def test_ai_chat_explicit_public_disabled_returns_401():
+    """When BUS_FORECAST_ALLOW_PUBLIC_AI=false and auth required, unauthenticated request gets 401."""
+    from fastapi import HTTPException
+    import pytest
+
+    with patch.dict(
+        os.environ,
+        {
+            "BUS_FORECAST_REQUIRE_AUTH": "1",
+            "BUS_FORECAST_API_KEY": "operator-secret-key",
+            "BUS_FORECAST_ALLOW_PUBLIC_AI": "false",
+            "OPENROUTER_API_KEY": "sk-or-test-key",
+        },
+    ):
+        payload = AIChatRequest(message="Hello")
+        with pytest.raises(HTTPException) as exc_info:
+            run_async(ai_chat(payload, DummyRequest(), authorization=None))
+        assert exc_info.value.status_code == 401
+        assert "Enter the API access key in app settings" in exc_info.value.detail
+
+
+def test_ai_chat_unconfigured_platform_auth_does_not_block_public_ai():
+    """When BUS_FORECAST_REQUIRE_AUTH=1 but BUS_FORECAST_API_KEY is not set on server, public AI works."""
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {
+        "model": "openrouter/free",
+        "choices": [{"message": {"role": "assistant", "content": "Transit intelligence online."}}],
+    }
+    with patch.dict(
+        os.environ,
+        {
+            "BUS_FORECAST_REQUIRE_AUTH": "1",
+            "BUS_FORECAST_API_KEY": "",
+            "BUS_FORECAST_ALLOW_PUBLIC_AI": "true",
+            "OPENROUTER_API_KEY": "sk-or-test-key",
+        },
+    ):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = fake_response
+            payload = AIChatRequest(message="Hello")
+            result = run_async(ai_chat(payload, DummyRequest(), authorization=None))
+            assert result["status"] == "ok"
+            assert result["role"] == "public"
+
