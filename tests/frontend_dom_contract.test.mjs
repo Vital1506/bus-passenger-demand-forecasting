@@ -37,3 +37,15 @@ test("opening screen identifies bounded server wake-up and health check", () => 
   assert.match(app, /Waking up the server \(up to 60s\)/);
   assert.match(app, /api\("\/health"\)/);
 });
+
+test("transit network explorer declares accessible search and detail components", () => {
+  assert.match(html, /data-view="network"/);
+  assert.match(html, /id="networkPage"/);
+  assert.match(html, /id="networkRouteSearch"/);
+  assert.match(html, /id="networkRouteList"/);
+  assert.match(html, /id="networkShapePreview"/);
+  assert.match(html, /id="networkStopsList"/);
+  assert.match(app, /\/api\/gtfs\/routes/);
+  assert.match(app, /\/api\/gtfs\/agencies/);
+  assert.match(app, /\/api\/gtfs\/upload/);
+});

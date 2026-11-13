@@ -9,7 +9,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -34,6 +34,14 @@ from .db import (
 )
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
+from .gtfs_importer import GTFSValidationError, import_gtfs_feed
+from .gtfs_service import (
+    get_route_details as gtfs_get_route_details,
+    list_agencies as gtfs_list_agencies,
+    list_feeds as gtfs_list_feeds,
+    list_routes as gtfs_list_routes,
+    list_stops as gtfs_list_stops,
+)
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
 from .route_identity import canonicalize_manual_route_id
@@ -953,6 +961,107 @@ def download_forecast(route_id: str | None = Query(default=None, min_length=1, m
 @app.get("/api/template.csv")
 def download_template() -> Response:
     return Response(content="service_date,route_id,passengers\n", media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="daily_route_counts_template.csv"'})
+
+
+@app.post("/api/gtfs/upload", dependencies=[Depends(authorize)])
+def upload_gtfs_feed(
+    file: UploadFile = File(...),
+    feed_id: str | None = Form(default=None),
+    agency_id: str | None = Form(default=None),
+) -> dict[str, Any]:
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only .zip GTFS archives are accepted")
+
+    content = file.file.read(50 * 1024 * 1024 + 1)
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="GTFS file exceeds maximum size of 50 MB")
+
+    try:
+        with get_db_session() as session:
+            summary = import_gtfs_feed(
+                session=session,
+                zip_bytes=content,
+                feed_id=feed_id,
+                agency_id=agency_id,
+            )
+            session.commit()
+            repo_record_audit_event(
+                session,
+                action="gtfs_upload",
+                source_system="gtfs_zip",
+                record_count=summary.routes_count,
+                route_count=summary.routes_count,
+                agency_id=summary.agency_id,
+                details={"feed_id": summary.feed_id, "counts": summary.to_dict()["counts"]},
+            )
+            session.commit()
+            return {"message": "GTFS feed imported successfully", "summary": summary.to_dict()}
+    except GTFSValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to process GTFS feed: {exc}")
+
+
+@app.get("/api/gtfs/feeds")
+def get_gtfs_feeds() -> list[dict[str, Any]]:
+    try:
+        with get_db_session() as session:
+            return gtfs_list_feeds(session)
+    except Exception:
+        return []
+
+
+@app.get("/api/gtfs/agencies")
+def get_gtfs_agencies() -> list[dict[str, Any]]:
+    try:
+        with get_db_session() as session:
+            return gtfs_list_agencies(session)
+    except Exception:
+        return []
+
+
+@app.get("/api/gtfs/routes")
+def get_gtfs_routes(
+    agency_id: str | None = None,
+    search: str | None = None,
+) -> list[dict[str, Any]]:
+    try:
+        clean_agency = agency_id if isinstance(agency_id, str) else None
+        clean_search = search if isinstance(search, str) else None
+        with get_db_session() as session:
+            return gtfs_list_routes(session, agency_id=clean_agency, query=clean_search)
+    except Exception:
+        return []
+
+
+@app.get("/api/gtfs/routes/{route_id}")
+def get_gtfs_route_details(route_id: str) -> dict[str, Any]:
+    try:
+        with get_db_session() as session:
+            details = gtfs_get_route_details(session, route_id=route_id)
+            if not details:
+                raise HTTPException(status_code=404, detail=f"Route '{route_id}' not found in transit network")
+            return details
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/gtfs/stops")
+def get_gtfs_stops(
+    search: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    try:
+        clean_search = search if isinstance(search, str) else None
+        clean_limit = limit if isinstance(limit, int) else 100
+        with get_db_session() as session:
+            return gtfs_list_stops(session, query=clean_search, limit=clean_limit)
+    except Exception:
+        return []
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)

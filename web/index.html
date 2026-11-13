@@ -70,6 +70,7 @@
         <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Start here</button>
         <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Forecasts</button>
         <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
+        <button type="button" data-view="network"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg></span> Transit Network</button>
         <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> My data</button>
         <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> How it works</button>
         <span class="nav-status"><i></i><span>API checks every minute</span></span>
@@ -188,6 +189,71 @@
           <div class="route-table-tools"><button id="exportRoutePlan" class="button button-primary" type="button">Export planning CSV ↓</button><button id="resetRoutePlans" class="button button-quiet" type="button">Clear route assumptions</button></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th>PEAK FORECAST DAY</th><th class="numeric">BOARDINGS (POINT / HIGH)</th><th class="numeric">PLANNED TRIPS / DAY</th><th class="numeric">TARGET / TRIP</th><th class="numeric">AVG / TRIP (POINT / HIGH)</th><th class="numeric">TRIPS AT TARGET (POINT / HIGH)</th><th>REVIEW SIGNAL</th></tr></thead><tbody id="routeRows"><tr class="empty-row"><td colspan="7">Route summaries will appear with forecasts.</td></tr></tbody></table></div>
         </section>
+        <section class="page-panel panel" data-pages="network" id="networkPage">
+          <div class="panel-heading"><div><p class="eyebrow">GTFS SCHEDULE NETWORK</p><h2>Transit Network Explorer</h2></div><span id="networkFeedBadge" class="route-data-badge">NO SCHEDULE LOADED</span></div>
+          <p class="page-lead">Inspect real transit agencies, route alignments, schedule bounds, and stops from imported GTFS feeds.</p>
+          <div class="network-upload-bar">
+            <div class="network-filters">
+              <label for="networkAgencySelect">Transit Agency</label>
+              <select id="networkAgencySelect"><option value="">All Agencies</option></select>
+            </div>
+            <div class="network-upload-controls">
+              <label class="button button-quiet" for="gtfsFileInput"><span>Import GTFS ZIP</span><input id="gtfsFileInput" type="file" accept=".zip,application/zip" class="sr-only" /></label>
+              <button id="uploadGtfsButton" class="button button-primary hidden" type="button">Upload Feed</button>
+            </div>
+          </div>
+          <div class="monthly-explorer-grid">
+            <div class="monthly-route-browser">
+              <form id="networkRouteSearchForm" class="monthly-route-search" role="search">
+                <label for="networkRouteSearch">Search route ID or name</label>
+                <div class="monthly-route-search-row">
+                  <input id="networkRouteSearch" type="search" maxlength="100" autocomplete="off" placeholder="e.g. 1 or Michigan" />
+                  <button class="button button-primary" type="submit">Filter</button>
+                </div>
+              </form>
+              <p id="networkRouteStatus" class="monthly-route-status" role="status" aria-live="polite">Loading routes…</p>
+              <div id="networkRouteList" class="monthly-route-results" aria-label="Transit routes list"></div>
+            </div>
+            <div class="monthly-route-detail">
+              <p id="networkRouteEmpty" class="monthly-route-empty">Select a route to inspect its schedule, stops, and alignment.</p>
+              <div id="networkRouteDetail" hidden>
+                <div class="monthly-route-detail-heading">
+                  <div>
+                    <h3 id="networkRouteTitle">Route Details</h3>
+                    <div class="network-badges" style="display: flex; gap: 8px; margin-top: 4px;">
+                      <span id="networkRouteAgency" class="route-pill">Agency</span>
+                      <span id="networkRouteType" class="route-pill">Bus</span>
+                    </div>
+                  </div>
+                  <div class="monthly-route-metrics">
+                    <article><small>OPERATING HOURS</small><strong id="networkServiceBounds">—</strong></article>
+                  </div>
+                </div>
+                <div style="margin: 12px 0;">
+                  <small style="color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;">SERVICE DAYS</small>
+                  <div id="networkCalendarDays" class="network-calendar-days" style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;"></div>
+                </div>
+                <div class="network-shape-card" style="margin: 16px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--surface-raised);">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 8px;"><small style="color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;">ROUTE ALIGNMENT PREVIEW</small><span id="networkShapeCount" style="font-size: 12px; color: var(--muted);">—</span></div>
+                  <div class="shape-svg-wrap" style="width: 100%; height: 200px; background: var(--bg); border-radius: 6px; overflow: hidden;">
+                    <svg id="networkShapePreview" viewBox="0 0 400 200" role="img" aria-label="Route geographic path" style="width: 100%; height: 100%;"></svg>
+                  </div>
+                </div>
+                <div class="network-stops-card" style="margin-top: 16px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 8px;"><small style="color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;">STOPS SEQUENCE</small><span id="networkStopsCount" style="font-size: 12px; color: var(--muted);">—</span></div>
+                  <div class="table-scroll" style="max-height: 280px; overflow-y: auto;">
+                    <table>
+                      <thead>
+                        <tr><th>#</th><th>STOP NAME</th><th>CODE</th><th class="numeric">LATITUDE</th><th class="numeric">LONGITUDE</th></tr>
+                      </thead>
+                      <tbody id="networkStopsList"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
         <section class="page-panel panel" data-pages="data" id="dataPage">
           <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
           <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
@@ -215,9 +281,9 @@ Content-Type: application/json
           <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>
         </section>
-        <section class="bottom-strip" data-pages="overview forecasts routes data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
+        <section class="bottom-strip" data-pages="overview forecasts routes network data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
       </main>
-      <footer data-pages="overview forecasts routes data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
+      <footer data-pages="overview forecasts routes network data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

@@ -177,6 +177,7 @@ const PAGE_INFO = {
   overview: ["Start here", "Choose the example or record a daily passenger count."],
   forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
   routes: ["Routes", "Search route history and compare forecast totals."],
+  network: ["Transit Network", "Inspect transit agencies, route alignments, schedules, and stops."],
   data: ["My data", "See which passenger counts are saved and when they were updated."],
   model: ["How it works", "A plain-language guide to the data and forecast."]
 };
@@ -338,6 +339,238 @@ function setupMonthlyRouteExplorer() {
     state.monthlySearchTimer = setTimeout(() => { void searchMonthlyRoutes(search.value); }, 250);
   });
   $("#monthlyRouteRetry").addEventListener("click", () => { void searchMonthlyRoutes(search.value); });
+}
+
+let networkInitialized = false;
+
+async function initNetworkExplorer() {
+  if (networkInitialized) return;
+  networkInitialized = true;
+  await loadNetworkAgenciesAndFeeds();
+  await filterNetworkRoutes();
+}
+
+async function loadNetworkAgenciesAndFeeds() {
+  try {
+    const feeds = await api("/api/gtfs/feeds").catch(() => []);
+    const badge = $("#networkFeedBadge");
+    if (badge) {
+      if (Array.isArray(feeds) && feeds.length > 0) {
+        const active = feeds.find((f) => f.is_active) || feeds[0];
+        badge.textContent = `${active.agency_id || "GTFS"} SCHEDULE · ACTIVE`;
+        badge.classList.remove("error");
+      } else {
+        badge.textContent = "NO SCHEDULE LOADED";
+      }
+    }
+
+    const agencies = await api("/api/gtfs/agencies").catch(() => []);
+    const select = $("#networkAgencySelect");
+    if (select && Array.isArray(agencies)) {
+      const prev = select.value;
+      select.innerHTML = '<option value="">All Agencies</option>' +
+        agencies.map((a) => `<option value="${escapeText(a.agency_id)}">${escapeText(a.agency_name || a.agency_id)}</option>`).join("");
+      if (prev) select.value = prev;
+    }
+  } catch (err) {
+    console.warn("Failed to load GTFS feeds/agencies", err);
+  }
+}
+
+async function filterNetworkRoutes() {
+  const search = $("#networkRouteSearch")?.value || "";
+  const agencyId = $("#networkAgencySelect")?.value || "";
+  const status = $("#networkRouteStatus");
+  const list = $("#networkRouteList");
+  if (status) status.textContent = "Loading routes…";
+
+  try {
+    let path = "/api/gtfs/routes?";
+    if (agencyId) path += `agency_id=${encodeURIComponent(agencyId)}&`;
+    if (search) path += `search=${encodeURIComponent(search)}&`;
+
+    const routes = await api(path);
+    if (!Array.isArray(routes) || routes.length === 0) {
+      if (status) status.textContent = "No transit routes found matching your criteria.";
+      if (list) list.innerHTML = '<p class="monthly-route-empty">No routes found.</p>';
+      return;
+    }
+
+    if (status) status.textContent = `Found ${routes.length} transit routes. Select a route to view schedule & stops.`;
+    if (list) {
+      list.innerHTML = routes.map((r) => `
+        <button class="monthly-route-item" type="button" data-route-id="${escapeText(r.route_id)}">
+          <div class="monthly-route-item-head">
+            <span class="route-pill">${escapeText(r.route_short_name || r.route_id)}</span>
+            <small style="color: var(--muted);">${r.trips_count || 0} trips</small>
+          </div>
+          <div class="monthly-route-item-name">${escapeText(r.route_long_name || r.route_short_name || r.route_id)}</div>
+        </button>
+      `).join("");
+
+      list.querySelectorAll("[data-route-id]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          list.querySelectorAll(".is-selected").forEach((el) => el.classList.remove("is-selected"));
+          btn.classList.add("is-selected");
+          void selectNetworkRoute(btn.dataset.routeId);
+        });
+      });
+    }
+  } catch (err) {
+    if (status) status.textContent = "Failed to load routes: " + err.message;
+  }
+}
+
+function renderRouteShapeSvg(points) {
+  const svg = $("#networkShapePreview");
+  const countLabel = $("#networkShapeCount");
+  if (!svg) return;
+
+  if (!Array.isArray(points) || points.length === 0) {
+    if (countLabel) countLabel.textContent = "No alignment data";
+    svg.innerHTML = '<text x="200" y="105" text-anchor="middle" fill="#877c94" font-size="12">No geographic alignment shape for this route</text>';
+    return;
+  }
+
+  if (countLabel) countLabel.textContent = `${points.length} GPS vertices`;
+
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const pt of points) {
+    if (pt.shape_pt_lat < minLat) minLat = pt.shape_pt_lat;
+    if (pt.shape_pt_lat > maxLat) maxLat = pt.shape_pt_lat;
+    if (pt.shape_pt_lon < minLon) minLon = pt.shape_pt_lon;
+    if (pt.shape_pt_lon > maxLon) maxLon = pt.shape_pt_lon;
+  }
+
+  const pad = 24;
+  const w = 400, h = 200;
+  const latSpan = (maxLat - minLat) || 0.0001;
+  const lonSpan = (maxLon - minLon) || 0.0001;
+
+  const projectX = (lon) => pad + ((lon - minLon) / lonSpan) * (w - 2 * pad);
+  const projectY = (lat) => pad + ((maxLat - lat) / latSpan) * (h - 2 * pad);
+
+  let pathData = "";
+  for (let i = 0; i < points.length; i++) {
+    const px = projectX(points[i].shape_pt_lon).toFixed(1);
+    const py = projectY(points[i].shape_pt_lat).toFixed(1);
+    pathData += (i === 0 ? `M ${px} ${py}` : ` L ${px} ${py}`);
+  }
+
+  const startPt = points[0];
+  const endPt = points[points.length - 1];
+  const sx = projectX(startPt.shape_pt_lon).toFixed(1);
+  const sy = projectY(startPt.shape_pt_lat).toFixed(1);
+  const ex = projectX(endPt.shape_pt_lon).toFixed(1);
+  const ey = projectY(endPt.shape_pt_lat).toFixed(1);
+
+  svg.innerHTML = `
+    <rect width="${w}" height="${h}" fill="var(--bg, #fcfbfe)" rx="6" />
+    <path d="${pathData}" fill="none" stroke="var(--blue, #8050d8)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="${sx}" cy="${sy}" r="5" fill="#22c55e" stroke="#ffffff" stroke-width="2"><title>Route Start</title></circle>
+    <circle cx="${ex}" cy="${ey}" r="5" fill="#ef4444" stroke="#ffffff" stroke-width="2"><title>Route Terminus</title></circle>
+  `;
+}
+
+async function selectNetworkRoute(routeId) {
+  const empty = $("#networkRouteEmpty");
+  const detail = $("#networkRouteDetail");
+  if (empty) empty.hidden = true;
+  if (detail) detail.hidden = false;
+
+  try {
+    const data = await api(`/api/gtfs/routes/${encodeURIComponent(routeId)}`);
+    const title = $("#networkRouteTitle");
+    if (title) title.textContent = `${data.route_short_name || data.route_id} · ${data.route_long_name || "Bus Route"}`;
+
+    const agency = $("#networkRouteAgency");
+    if (agency) agency.textContent = data.agency_id || "Transit Agency";
+
+    const typeBadge = $("#networkRouteType");
+    const routeTypeNames = { 0: "Tram", 1: "Subway", 2: "Rail", 3: "Bus", 4: "Ferry" };
+    if (typeBadge) typeBadge.textContent = routeTypeNames[data.route_type] || "Bus";
+
+    const bounds = $("#networkServiceBounds");
+    if (bounds) bounds.textContent = data.first_service_time && data.last_service_time ? `${data.first_service_time.slice(0, 5)} – ${data.last_service_time.slice(0, 5)}` : "Not scheduled";
+
+    const daysContainer = $("#networkCalendarDays");
+    if (daysContainer) {
+      const activeDays = new Set();
+      if (Array.isArray(data.calendar)) {
+        for (const cal of data.calendar) {
+          if (Array.isArray(cal.days)) {
+            for (const d of cal.days) activeDays.add(d);
+          }
+        }
+      }
+      const allDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+      daysContainer.innerHTML = allDays.map((d) => {
+        const isActive = activeDays.has(d);
+        const style = isActive
+          ? "background: var(--blue-soft, #e9d5ff); color: var(--blue, #6b21a8); font-weight: 700; border: 1px solid var(--blue, #c084fc);"
+          : "background: var(--surface-raised, #f3f4f6); color: var(--muted, #9ca3af); opacity: 0.6;";
+        return `<span style="padding: 2px 8px; border-radius: 4px; font-size: 11px; ${style}">${d}</span>`;
+      }).join("");
+    }
+
+    renderRouteShapeSvg(data.shape_points || []);
+
+    const stopsCount = $("#networkStopsCount");
+    if (stopsCount) stopsCount.textContent = `${data.stops?.length || 0} ordered stops`;
+
+    const stopsList = $("#networkStopsList");
+    if (stopsList) {
+      if (Array.isArray(data.stops) && data.stops.length > 0) {
+        stopsList.innerHTML = data.stops.map((s, idx) => `
+          <tr>
+            <td>${s.stop_sequence ?? (idx + 1)}</td>
+            <td><strong>${escapeText(s.stop_name)}</strong></td>
+            <td><code>${escapeText(s.stop_code || s.stop_id)}</code></td>
+            <td class="numeric">${Number(s.stop_lat).toFixed(4)}</td>
+            <td class="numeric">${Number(s.stop_lon).toFixed(4)}</td>
+          </tr>
+        `).join("");
+      } else {
+        stopsList.innerHTML = '<tr><td colspan="5" class="empty-row">No stops recorded for this route.</td></tr>';
+      }
+    }
+  } catch (err) {
+    toast("Failed to load route details: " + err.message, true);
+  }
+}
+
+function setupTransitNetworkExplorer() {
+  const gtfsInput = $("#gtfsFileInput");
+  if (gtfsInput) {
+    gtfsInput.addEventListener("change", (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      withBusy("Importing GTFS…", async () => {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await api("/api/gtfs/upload", { method: "POST", body: form });
+        toast(res.message || "GTFS archive imported successfully!");
+        networkInitialized = false;
+        await initNetworkExplorer();
+        return res;
+      }).finally(() => { e.target.value = ""; });
+    });
+  }
+  const agencySelect = $("#networkAgencySelect");
+  if (agencySelect) {
+    agencySelect.addEventListener("change", () => filterNetworkRoutes());
+  }
+  const routeForm = $("#networkRouteSearchForm");
+  if (routeForm) {
+    routeForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      filterNetworkRoutes();
+    });
+  }
+  const uploadGtfsBtn = $("#uploadGtfsButton");
+  if (uploadGtfsBtn) {
+    uploadGtfsBtn.addEventListener("click", () => gtfsInput?.click());
+  }
 }
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function renderPlaceSuggestions(input, list, values, preferred = []) {
@@ -510,6 +743,7 @@ function navigate(view, updateHash = true) {
   if (updateHash && location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   if (view === "forecasts" && state.data) renderChart(state.data.forecasts);
   if (view === "routes") void searchMonthlyRoutes($("#monthlyRouteSearch").value);
+  if (view === "network") void initNetworkExplorer();
 }
 function readRoutePlans() {
   try {
@@ -739,6 +973,7 @@ function setup() {
   // Older versions persisted the operator key. Remove it and retain keys only in page memory.
   try { localStorage.removeItem("busForecastApiKey"); } catch (_) {}
   setupMonthlyRouteExplorer();
+  setupTransitNetworkExplorer();
   const initialView = location.hash.slice(1);
   navigate(PAGE_INFO[initialView] ? initialView : "overview", false);
   $("#mainNav").addEventListener("click", (event) => { const button = event.target.closest("[data-view]"); if (button) navigate(button.dataset.view); });

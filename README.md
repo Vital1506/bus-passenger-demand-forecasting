@@ -50,6 +50,21 @@ The platform supports both zero-configuration local SQLite and production Postgr
 
 Detailed migration steps and database schema tables are documented in [MIGRATIONS.md](MIGRATIONS.md).
 
+## GTFS static transit network integration
+
+The platform integrates standard General Transit Feed Specification (GTFS Schedule) feeds to anchor passenger forecasting and route exploration in actual transit geometry and service timetables.
+
+- **Strict GTFS specification adherence:** supports `agency.txt`, `routes.txt`, `stops.txt`, `trips.txt`, `stop_times.txt`, `calendar.txt` / `calendar_dates.txt`, and optional `shapes.txt`.
+- **Security & integrity:** ZipSlip path traversal protection on all archive entries, 50 MB archive upload limit, relational foreign key validation, coordinate bounds check (`-90 <= lat <= 90`, `-180 <= lon <= 180`), and GTFS extended post-midnight time parsing (e.g. `25:30:00`).
+- **REST APIs:**
+  - `POST /api/gtfs/upload`: authenticated multipart ZIP upload with transactional replacement and audit logging.
+  - `GET /api/gtfs/feeds`: list imported GTFS feeds and status metadata.
+  - `GET /api/gtfs/agencies`: transit operators in scope.
+  - `GET /api/gtfs/routes`: route catalog with trip counts and search query filtering.
+  - `GET /api/gtfs/routes/{route_id}`: comprehensive route details with schedule bounds, service calendar days, ordered stops, and shape coordinates.
+  - `GET /api/gtfs/stops`: network stops catalog with search and coordinate lookup.
+- **Transit Network Explorer:** accessible in the web dashboard under **Transit Network** to inspect operators, browse routes, review operating hours, view service day badges, preview alignment shapes as responsive vector paths, and inspect ordered stop sequences.
+
 ## Interface design
 
 The dashboard uses a persistent desktop navigation rail, compact mobile tabs, clear headings, carefully spaced forecast surfaces, responsive route tables, and visible keyboard focus. Its restrained teal and warm-neutral visual system uses color for status and emphasis without making color the only signal. The visual system is informed by [Material Design 3](https://m3.material.io/) and [Carbon's accessible data visualization palettes](https://carbondesignsystem.com/data-visualization/color-palettes/). Status labels accompany their colors, and sample data is clearly identified.
