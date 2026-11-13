@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from .db.models import (
     GTFSAgency,
     GTFSCalendar,
+    GTFSCalendarDate,
     GTFSFeed,
     GTFSRoute,
     GTFSShape,
@@ -189,6 +190,22 @@ def get_route_details(
             "end_date": c.end_date.isoformat(),
         })
 
+    # Calendar exceptions (holidays, special service additions/removals)
+    cal_exceptions = []
+    if service_ids:
+        exc_rows = session.execute(
+            select(GTFSCalendarDate).where(
+                GTFSCalendarDate.feed_id == f_id,
+                GTFSCalendarDate.service_id.in_(service_ids),
+            ).order_by(GTFSCalendarDate.date)
+        ).scalars().all()
+        for exc in exc_rows:
+            cal_exceptions.append({
+                "service_id": exc.service_id,
+                "date": exc.date.isoformat(),
+                "exception_type": "added" if exc.exception_type == 1 else "removed",
+            })
+
     # 3. Schedule Bounds (Earliest and Latest departure times)
     time_bounds = session.execute(
         select(
@@ -257,6 +274,7 @@ def get_route_details(
         "first_service_time": first_departure,
         "last_service_time": last_departure,
         "calendar": calendar_info,
+        "calendar_exceptions": cal_exceptions,
         "stops": ordered_stops,
         "stops_count": len(ordered_stops),
         "shape_points": shape_points,

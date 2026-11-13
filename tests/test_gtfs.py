@@ -221,6 +221,11 @@ def test_import_and_query_gtfs(gtfs_db):
     assert "Fri" in details["calendar"][0]["days"]
     assert "Sat" not in details["calendar"][0]["days"]
 
+    # Calendar exception dates
+    assert len(details["calendar_exceptions"]) == 1
+    assert details["calendar_exceptions"][0]["date"] == "2024-07-04"
+    assert details["calendar_exceptions"][0]["exception_type"] == "removed"
+
     # 5. Stops list
     stops = list_stops(gtfs_db, query="Madison")
     assert len(stops) == 1
