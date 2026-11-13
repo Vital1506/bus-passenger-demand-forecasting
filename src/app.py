@@ -44,6 +44,7 @@ from .gtfs_service import (
 )
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
+from .realtime import get_realtime_service
 from .route_identity import canonicalize_manual_route_id
 from .schedule_import import schedules_to_synthetic_counts
 from .train import train_project
@@ -1062,6 +1063,100 @@ def get_gtfs_stops(
             return gtfs_list_stops(session, query=clean_search, limit=clean_limit)
     except Exception:
         return []
+
+
+@app.get("/api/realtime/vehicles")
+def get_realtime_vehicles(
+    route_id: str | None = None,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    min_lon: float | None = None,
+    max_lon: float | None = None,
+    agency_id: str | None = None,
+) -> list[dict[str, Any]]:
+    clean_route = route_id if isinstance(route_id, str) else None
+    clean_agency = agency_id if isinstance(agency_id, str) else None
+    service = get_realtime_service()
+    return service.get_vehicles(
+        route_id=clean_route,
+        min_lat=float(min_lat) if min_lat is not None and isinstance(min_lat, (int, float, str)) else None,
+        max_lat=float(max_lat) if max_lat is not None and isinstance(max_lat, (int, float, str)) else None,
+        min_lon=float(min_lon) if min_lon is not None and isinstance(min_lon, (int, float, str)) else None,
+        max_lon=float(max_lon) if max_lon is not None and isinstance(max_lon, (int, float, str)) else None,
+        agency_id=clean_agency,
+    )
+
+
+@app.get("/api/realtime/vehicles/{vehicle_id}")
+def get_realtime_vehicle(vehicle_id: str) -> dict[str, Any]:
+    service = get_realtime_service()
+    v = service.get_vehicle(vehicle_id)
+    if not v:
+        raise HTTPException(status_code=404, detail=f"Vehicle '{vehicle_id}' not found in active telemetry")
+    return v
+
+
+@app.get("/api/realtime/trip-updates")
+def get_realtime_trip_updates(
+    route_id: str | None = None,
+    trip_id: str | None = None,
+    agency_id: str | None = None,
+) -> list[dict[str, Any]]:
+    clean_route = route_id if isinstance(route_id, str) else None
+    clean_trip = trip_id if isinstance(trip_id, str) else None
+    clean_agency = agency_id if isinstance(agency_id, str) else None
+    service = get_realtime_service()
+    return service.get_trip_updates(route_id=clean_route, trip_id=clean_trip, agency_id=clean_agency)
+
+
+@app.get("/api/realtime/alerts")
+def get_realtime_alerts(
+    route_id: str | None = None,
+    stop_id: str | None = None,
+    agency_id: str | None = None,
+) -> list[dict[str, Any]]:
+    clean_route = route_id if isinstance(route_id, str) else None
+    clean_stop = stop_id if isinstance(stop_id, str) else None
+    clean_agency = agency_id if isinstance(agency_id, str) else None
+    service = get_realtime_service()
+    return service.get_alerts(route_id=clean_route, stop_id=clean_stop, agency_id=clean_agency)
+
+
+@app.get("/api/realtime/summary")
+def get_realtime_summary(agency_id: str | None = None) -> dict[str, Any]:
+    clean_agency = agency_id if isinstance(agency_id, str) else None
+    service = get_realtime_service()
+    return service.get_summary(agency_id=clean_agency)
+
+
+@app.post("/api/realtime/ingest", dependencies=[Depends(authorize)])
+def ingest_realtime_feed(
+    file: UploadFile = File(default=None),
+    agency_id: str | None = Form(default="default"),
+) -> dict[str, Any]:
+    if not file:
+        raise HTTPException(status_code=400, detail="A GTFS-RT Protobuf or JSON file payload is required")
+    raw = file.file.read(20 * 1024 * 1024 + 1)
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Payload exceeds 20 MB limit")
+    try:
+        service = get_realtime_service()
+        res = service.ingest_payload(raw, agency_id=agency_id or "default")
+        return {"message": "GTFS-RT payload ingested successfully", "stats": res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to parse GTFS-RT feed: {exc}")
+
+
+@app.post("/api/realtime/demo-snapshot")
+def generate_realtime_demo_snapshot(agency_id: str = "CTA") -> dict[str, Any]:
+    """Provide a labeled synthetic live fleet snapshot when no live provider feed is configured."""
+    service = get_realtime_service()
+    stats = service.generate_synthetic_live_snapshot(agency_id=agency_id)
+    return {
+        "message": "Synthetic live fleet telemetry snapshot loaded",
+        "notice": "All coordinates and delays in this snapshot are synthetic demonstration data.",
+        "stats": stats,
+    }
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
