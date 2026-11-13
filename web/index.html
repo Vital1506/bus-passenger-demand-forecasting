@@ -71,6 +71,7 @@
         <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Forecasts</button>
         <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
         <button type="button" data-view="network"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg></span> Transit Network</button>
+        <button type="button" data-view="operations"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span> Live Operations</button>
         <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> My data</button>
         <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> How it works</button>
         <span class="nav-status"><i></i><span>API checks every minute</span></span>
@@ -254,6 +255,59 @@
             </div>
           </div>
         </section>
+        <section class="page-panel panel" data-pages="operations" id="operationsPage">
+          <div class="panel-heading">
+            <div><p class="eyebrow">GTFS-REALTIME TELEMETRY</p><h2>Live Fleet Operations & Dispatch</h2></div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span id="operationsTelemetryBadge" class="route-data-badge">NO LIVE FEED</span>
+              <button id="btnSimulateLiveFleet" class="button button-quiet" type="button">Simulate Live Telemetry ↻</button>
+            </div>
+          </div>
+          <p class="page-lead">Live vehicle tracking, delay propagation, automated bunching detection, and dispatch decision support.</p>
+          <div class="summary-cards">
+            <article><small>ACTIVE FLEET</small><strong id="opsKpiActiveFleet">—</strong></article>
+            <article><small>ON-TIME PERFORMANCE</small><strong id="opsKpiOtp">—</strong></article>
+            <article><small>EXCESS WAIT TIME</small><strong id="opsKpiEwt">—</strong></article>
+            <article><small>HEADWAY REGULARITY</small><strong id="opsKpiRegularity">—</strong></article>
+          </div>
+          <div class="monthly-explorer-grid" style="margin-top: 16px;">
+            <div class="monthly-route-browser" style="flex: 1 1 360px;">
+              <div class="panel-heading" style="margin-bottom: 8px;">
+                <div><p class="eyebrow">OPERATIONAL ANOMALIES</p><h3 style="font-size: 15px; margin: 0;">Live Alerts & Bunching</h3></div>
+              </div>
+              <div id="opsAlertsList" style="display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto;">
+                <p class="monthly-route-empty">No active operational alerts.</p>
+              </div>
+              <div class="panel-heading" style="margin-top: 16px; margin-bottom: 8px;">
+                <div><p class="eyebrow">DECISION SUPPORT</p><h3 style="font-size: 15px; margin: 0;">Dispatch Recommendations</h3></div>
+              </div>
+              <div id="opsRecommendationsList" style="display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto;">
+                <p class="monthly-route-empty">No dispatch actions required.</p>
+              </div>
+            </div>
+            <div class="monthly-route-detail" style="flex: 2 1 500px;">
+              <div class="panel-heading" style="margin-bottom: 8px;">
+                <div><p class="eyebrow">LIVE SPATIAL RADAR</p><h3 style="font-size: 15px; margin: 0;">Real-Time Fleet Map</h3></div>
+              </div>
+              <div style="width: 100%; height: 260px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; position: relative;">
+                <svg id="opsFleetMap" viewBox="0 0 500 260" role="img" aria-label="Interactive Live Fleet Map" style="width: 100%; height: 100%;"></svg>
+              </div>
+              <div class="panel-heading" style="margin-top: 16px; margin-bottom: 8px;">
+                <div><p class="eyebrow">TELEMETRY STREAM</p><h3 style="font-size: 15px; margin: 0;">Active Vehicles & Occupancy</h3></div>
+              </div>
+              <div class="table-scroll" style="max-height: 220px; overflow-y: auto;">
+                <table>
+                  <thead>
+                    <tr><th>VEHICLE</th><th>ROUTE</th><th>STATUS</th><th>SPEED</th><th>OCCUPANCY</th></tr>
+                  </thead>
+                  <tbody id="opsVehiclesTableBody">
+                    <tr><td colspan="5" class="empty-row">No live vehicles reporting telemetry.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
         <section class="page-panel panel" data-pages="data" id="dataPage">
           <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
           <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
@@ -281,9 +335,9 @@ Content-Type: application/json
           <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>
         </section>
-        <section class="bottom-strip" data-pages="overview forecasts routes network data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
+        <section class="bottom-strip" data-pages="overview forecasts routes network operations data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
       </main>
-      <footer data-pages="overview forecasts routes network data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
+      <footer data-pages="overview forecasts routes network operations data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

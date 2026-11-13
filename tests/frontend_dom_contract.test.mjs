@@ -49,3 +49,16 @@ test("transit network explorer declares accessible search and detail components"
   assert.match(app, /\/api\/gtfs\/agencies/);
   assert.match(app, /\/api\/gtfs\/upload/);
 });
+
+test("live operations dashboard declares accessible fleet radar and dispatch components", () => {
+  assert.match(html, /data-view="operations"/);
+  assert.match(html, /id="operationsPage"/);
+  assert.match(html, /id="opsFleetMap"/);
+  assert.match(html, /id="opsAlertsList"/);
+  assert.match(html, /id="opsRecommendationsList"/);
+  assert.match(html, /id="opsVehiclesTableBody"/);
+  assert.match(app, /\/api\/operations\/metrics/);
+  assert.match(app, /\/api\/operations\/alerts/);
+  assert.match(app, /\/api\/operations\/dispatch-recommendations/);
+  assert.match(app, /\/api\/realtime\/vehicles/);
+});

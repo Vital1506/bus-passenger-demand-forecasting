@@ -178,6 +178,7 @@ const PAGE_INFO = {
   forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
   routes: ["Routes", "Search route history and compare forecast totals."],
   network: ["Transit Network", "Inspect transit agencies, route alignments, schedules, and stops."],
+  operations: ["Live Operations", "Monitor real-time vehicle positions, delays, bunching alerts, and dispatch actions."],
   data: ["My data", "See which passenger counts are saved and when they were updated."],
   model: ["How it works", "A plain-language guide to the data and forecast."]
 };
@@ -572,6 +573,189 @@ function setupTransitNetworkExplorer() {
     uploadGtfsBtn.addEventListener("click", () => gtfsInput?.click());
   }
 }
+
+async function initOperationsDashboard() {
+  await loadOperationsData();
+}
+
+async function loadOperationsData() {
+  try {
+    const [metrics, summary, alerts, recs, vehicles] = await Promise.all([
+      api("/api/operations/metrics").catch(() => ({})),
+      api("/api/realtime/summary").catch(() => ({})),
+      api("/api/operations/alerts").catch(() => []),
+      api("/api/operations/dispatch-recommendations").catch(() => []),
+      api("/api/realtime/vehicles").catch(() => []),
+    ]);
+
+    renderOperationsKpis(metrics, summary);
+    renderOperationsAlerts(alerts);
+    renderDispatchRecommendations(recs);
+    renderFleetMapSvg(vehicles);
+    renderFleetVehiclesTable(vehicles);
+
+    const badge = $("#operationsTelemetryBadge");
+    if (badge) {
+      const activeCount = Array.isArray(vehicles) ? vehicles.length : 0;
+      if (activeCount > 0) {
+        badge.textContent = `${activeCount} BUSES ACTIVE · LIVE`;
+        badge.classList.remove("error");
+      } else {
+        badge.textContent = "NO LIVE TELEMETRY";
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load operations data", err);
+  }
+}
+
+function renderOperationsKpis(metrics, summary) {
+  const activeFleet = $("#opsKpiActiveFleet");
+  if (activeFleet) activeFleet.textContent = metrics?.active_fleet_count != null ? metrics.active_fleet_count.toLocaleString() : "0";
+
+  const otp = $("#opsKpiOtp");
+  if (otp) otp.textContent = metrics?.on_time_performance_pct != null ? `${metrics.on_time_performance_pct}%` : "—";
+
+  const ewt = $("#opsKpiEwt");
+  if (ewt) ewt.textContent = metrics?.excess_wait_time_minutes != null ? `+${metrics.excess_wait_time_minutes} min` : "—";
+
+  const reg = $("#opsKpiRegularity");
+  if (reg) reg.textContent = metrics?.service_regularity_index != null ? `${(metrics.service_regularity_index * 100).toFixed(0)}%` : "—";
+}
+
+function renderOperationsAlerts(alerts) {
+  const container = $("#opsAlertsList");
+  if (!container) return;
+
+  if (!Array.isArray(alerts) || alerts.length === 0) {
+    container.innerHTML = '<p class="monthly-route-empty">No active operational alerts. Fleet is operating within normal parameters.</p>';
+    return;
+  }
+
+  container.innerHTML = alerts.map((a) => {
+    const isCritical = a.severity === "CRITICAL" || a.severity === "HIGH";
+    const bgStyle = isCritical ? "background: #fef2f2; border-color: #f87171;" : "background: #fffbeb; border-color: #fcd34d;";
+    const badgeColor = isCritical ? "#ef4444" : "#f59e0b";
+    return `
+      <div style="border: 1px solid var(--border); border-radius: 6px; padding: 10px; ${bgStyle}">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <span style="font-weight: 700; font-size: 11px; color: ${badgeColor}; text-transform: uppercase;">${escapeText(a.anomaly_type)} · ${escapeText(a.severity)}</span>
+          <span class="route-pill">${escapeText(a.route_id)}</span>
+        </div>
+        <p style="margin: 0; font-size: 13px; line-height: 1.4;">${escapeText(a.description)}</p>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderDispatchRecommendations(recs) {
+  const container = $("#opsRecommendationsList");
+  if (!container) return;
+
+  if (!Array.isArray(recs) || recs.length === 0) {
+    container.innerHTML = '<p class="monthly-route-empty">No dispatch actions required right now.</p>';
+    return;
+  }
+
+  container.innerHTML = recs.map((r) => `
+    <div style="border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--surface-raised);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span style="font-weight: 700; font-size: 11px; color: var(--blue, #8050d8); text-transform: uppercase;">ACTION: ${escapeText(r.action_type)}</span>
+        <span class="route-pill">${escapeText(r.route_id)}</span>
+      </div>
+      <p style="margin: 0 0 6px 0; font-size: 13px; font-weight: 600;">${escapeText(r.instruction)}</p>
+      <small style="color: var(--muted); font-size: 11px;">${escapeText(r.estimated_passenger_benefit)}</small>
+    </div>
+  `).join("");
+}
+
+function renderFleetMapSvg(vehicles) {
+  const svg = $("#opsFleetMap");
+  if (!svg) return;
+
+  if (!Array.isArray(vehicles) || vehicles.length === 0) {
+    svg.innerHTML = '<text x="250" y="130" text-anchor="middle" fill="#877c94" font-size="13">No live GPS vehicles active on radar</text>';
+    return;
+  }
+
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const v of vehicles) {
+    if (v.latitude < minLat) minLat = v.latitude;
+    if (v.latitude > maxLat) maxLat = v.latitude;
+    if (v.longitude < minLon) minLon = v.longitude;
+    if (v.longitude > maxLon) maxLon = v.longitude;
+  }
+
+  const pad = 36;
+  const w = 500, h = 260;
+  const latSpan = (maxLat - minLat) || 0.01;
+  const lonSpan = (maxLon - minLon) || 0.01;
+
+  const projectX = (lon) => pad + ((lon - minLon) / lonSpan) * (w - 2 * pad);
+  const projectY = (lat) => pad + ((maxLat - lat) / latSpan) * (h - 2 * pad);
+
+  const dots = vehicles.map((v) => {
+    const cx = projectX(v.longitude).toFixed(1);
+    const cy = projectY(v.latitude).toFixed(1);
+    const isCrowded = v.occupancy_status === "FULL" || v.occupancy_status === "STANDING_ROOM_ONLY";
+    const color = isCrowded ? "#ef4444" : "#22c55e";
+    const label = `${escapeText(v.vehicle_id)} (R${escapeText(v.route_id || "—")})`;
+    return `
+      <g>
+        <circle cx="${cx}" cy="${cy}" r="12" fill="${color}" fill-opacity="0.25" />
+        <circle cx="${cx}" cy="${cy}" r="6" fill="${color}" stroke="#ffffff" stroke-width="2">
+          <title>${label} · ${v.speed_kmh || 0} km/h · ${v.occupancy_status}</title>
+        </circle>
+        <text x="${cx}" y="${Number(cy) - 9}" text-anchor="middle" fill="var(--text, #1f2937)" font-size="10" font-weight="700">${label}</text>
+      </g>
+    `;
+  }).join("");
+
+  svg.innerHTML = `
+    <rect width="${w}" height="${h}" fill="var(--bg, #fcfbfe)" rx="8" />
+    <defs>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="var(--border, #f3e8ff)" stroke-width="1"/>
+      </pattern>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#grid)" />
+    ${dots}
+  `;
+}
+
+function renderFleetVehiclesTable(vehicles) {
+  const tbody = $("#opsVehiclesTableBody");
+  if (!tbody) return;
+
+  if (!Array.isArray(vehicles) || vehicles.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No active vehicles reporting telemetry.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = vehicles.map((v) => `
+    <tr>
+      <td><strong>${escapeText(v.vehicle_id)}</strong></td>
+      <td><span class="route-pill">${escapeText(v.route_id || "—")}</span></td>
+      <td>${escapeText(v.current_status || "IN_TRANSIT")}</td>
+      <td>${v.speed_kmh ? `${v.speed_kmh} km/h` : "—"}</td>
+      <td><span class="route-pill" style="font-size: 11px;">${escapeText(v.occupancy_status || "UNKNOWN")}</span></td>
+    </tr>
+  `).join("");
+}
+
+function setupOperationsListeners() {
+  const simBtn = $("#btnSimulateLiveFleet");
+  if (simBtn) {
+    simBtn.addEventListener("click", () => {
+      withBusy("Simulating live telemetry…", async () => {
+        const res = await api("/api/realtime/demo-snapshot", { method: "POST" });
+        toast(res.message || "Simulated live telemetry generated!");
+        await loadOperationsData();
+        return res;
+      });
+    });
+  }
+}
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function renderPlaceSuggestions(input, list, values, preferred = []) {
   if (!input || !list) return;
@@ -744,6 +928,7 @@ function navigate(view, updateHash = true) {
   if (view === "forecasts" && state.data) renderChart(state.data.forecasts);
   if (view === "routes") void searchMonthlyRoutes($("#monthlyRouteSearch").value);
   if (view === "network") void initNetworkExplorer();
+  if (view === "operations") void initOperationsDashboard();
 }
 function readRoutePlans() {
   try {
@@ -974,6 +1159,7 @@ function setup() {
   try { localStorage.removeItem("busForecastApiKey"); } catch (_) {}
   setupMonthlyRouteExplorer();
   setupTransitNetworkExplorer();
+  setupOperationsListeners();
   const initialView = location.hash.slice(1);
   navigate(PAGE_INFO[initialView] ? initialView : "overview", false);
   $("#mainNav").addEventListener("click", (event) => { const button = event.target.closest("[data-view]"); if (button) navigate(button.dataset.view); });
