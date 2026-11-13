@@ -1,0 +1,596 @@
+[
+  {
+    "method": "GET",
+    "path": "/openapi.json",
+    "endpoint": "openapi",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/docs",
+    "endpoint": "swagger_ui_html",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/docs/oauth2-redirect",
+    "endpoint": "swagger_ui_redirect",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/redoc",
+    "endpoint": "redoc_html",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/health",
+    "endpoint": "health",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/health",
+    "endpoint": "health",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/ready",
+    "endpoint": "readiness",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ready",
+    "endpoint": "readiness",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/db/health",
+    "endpoint": "get_db_health",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/storage/health",
+    "endpoint": "get_storage_health",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/db/migrations",
+    "endpoint": "get_db_migrations",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/status",
+    "endpoint": "get_status",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/monthly-data/status",
+    "endpoint": "get_monthly_data_status",
+    "auth_required": true,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/monthly-data/routes",
+    "endpoint": "list_monthly_routes",
+    "auth_required": true,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/monthly-data/routes/{route_id}/history",
+    "endpoint": "get_monthly_route_history",
+    "auth_required": true,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "GET",
+    "path": "/api/public/monthly-data/routes",
+    "endpoint": "public_monthly_routes",
+    "auth_required": false,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "GET",
+    "path": "/api/public/monthly-data/routes/{route_id}/history",
+    "endpoint": "public_monthly_route_history",
+    "auth_required": false,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "POST",
+    "path": "/api/monthly-data/upload",
+    "endpoint": "upload_monthly_data",
+    "auth_required": true,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/public-demo/status",
+    "endpoint": "public_demo_status",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/public-demo/forecast.csv",
+    "endpoint": "public_demo_forecast_csv",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/public-demo/sample.csv",
+    "endpoint": "public_demo_sample_csv",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/data/upload",
+    "endpoint": "upload_data",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "POST",
+    "path": "/api/data/ingest",
+    "endpoint": "ingest_daily_counts",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "POST",
+    "path": "/api/data/demo",
+    "endpoint": "load_demo_data",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "POST",
+    "path": "/api/train",
+    "endpoint": "train_model",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "POST",
+    "path": "/api/forecast",
+    "endpoint": "refresh_forecast",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "Protected mutation endpoint verified"
+  },
+  {
+    "method": "GET",
+    "path": "/api/forecast.csv",
+    "endpoint": "download_forecast",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/template.csv",
+    "endpoint": "download_template",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/gtfs/upload",
+    "endpoint": "upload_gtfs_feed",
+    "auth_required": true,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/gtfs/feeds",
+    "endpoint": "get_gtfs_feeds",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/gtfs/agencies",
+    "endpoint": "get_gtfs_agencies",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/gtfs/routes",
+    "endpoint": "get_gtfs_routes",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/gtfs/routes/{route_id}",
+    "endpoint": "get_gtfs_route_details",
+    "auth_required": false,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "GET",
+    "path": "/api/gtfs/stops",
+    "endpoint": "get_gtfs_stops",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/realtime/vehicles",
+    "endpoint": "get_realtime_vehicles",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/realtime/vehicles/{vehicle_id}",
+    "endpoint": "get_realtime_vehicle",
+    "auth_required": false,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "GET",
+    "path": "/api/realtime/trip-updates",
+    "endpoint": "get_realtime_trip_updates",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/realtime/alerts",
+    "endpoint": "get_realtime_alerts",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/realtime/summary",
+    "endpoint": "get_realtime_summary",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/realtime/ingest",
+    "endpoint": "ingest_realtime_feed",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "POST",
+    "path": "/api/realtime/demo-snapshot",
+    "endpoint": "generate_realtime_demo_snapshot",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/forecast/realtime/{route_id}",
+    "endpoint": "get_route_realtime_forecast",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/forecast/intraday",
+    "endpoint": "get_intraday_network_curve",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/operations/alerts",
+    "endpoint": "get_operations_alerts",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/operations/dispatch-recommendations",
+    "endpoint": "get_dispatch_recommendations",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/operations/metrics",
+    "endpoint": "get_operations_metrics",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/quality/drift-status",
+    "endpoint": "get_quality_drift_status",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/quality/audit-logs",
+    "endpoint": "get_quality_audit_logs",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/quality/check-drift",
+    "endpoint": "check_quality_drift",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/roles",
+    "endpoint": "get_auth_roles",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/passenger-data/upload",
+    "endpoint": "upload_passenger_data",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/occupancy/trip/{trip_id}",
+    "endpoint": "get_trip_occupancy",
+    "auth_required": false,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "GET",
+    "path": "/api/occupancy/route/{route_id}",
+    "endpoint": "get_route_occupancy_profile",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/model/benchmark",
+    "endpoint": "get_model_benchmark",
+    "auth_required": false,
+    "http_status": 404,
+    "test_result": "PASSED",
+    "validation": "404 Handled Gracefully"
+  },
+  {
+    "method": "POST",
+    "path": "/api/simulator/evaluate",
+    "endpoint": "evaluate_service_simulation",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 Payload Validated"
+  },
+  {
+    "method": "GET",
+    "path": "/api/reports/daily",
+    "endpoint": "get_daily_report",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/reports/daily/csv",
+    "endpoint": "download_daily_report_csv",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/api/reports/capacity-risk",
+    "endpoint": "get_capacity_risk_report",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/reports/webhook",
+    "endpoint": "trigger_alert_webhook",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/realtime/providers",
+    "endpoint": "list_realtime_providers",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/realtime/providers/poll",
+    "endpoint": "poll_realtime_provider",
+    "auth_required": false,
+    "http_status": null,
+    "test_result": "BLOCKED",
+    "validation": "Mutation/Upload Requires External Fixture Payload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ai/status",
+    "endpoint": "ai_status",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ai/chat",
+    "endpoint": "ai_chat",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 Verified via OpenRouter live tests"
+  },
+  {
+    "method": "GET",
+    "path": "/manifest.webmanifest",
+    "endpoint": "manifest",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/sw.js",
+    "endpoint": "service_worker",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "endpoint": "home",
+    "auth_required": false,
+    "http_status": 200,
+    "test_result": "PASSED",
+    "validation": "200 OK / Content Valid"
+  }
+]

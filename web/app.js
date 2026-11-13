@@ -1248,7 +1248,23 @@ async function waitForServer() {
 async function withBusy(label, operation) {
   if (state.busy) return;
   setBusy(true, label);
-  try { const result = await operation(); if (result.message) toast(result.message); const updatedStatus = result.status || (result.public_demo ? result : null); if (updatedStatus) { if (!updatedStatus.public_demo && updatedStatus.data_loaded && !updatedStatus.forecasts?.length) { const demo = await api("/api/public-demo/status"); setPublicDemoMode(true, true); render({ ...demo, public_demo: true }); } else { setPublicDemoMode(Boolean(updatedStatus.public_demo), Boolean(updatedStatus.public_demo ? state.operatorAccess : updatedStatus.data_loaded)); render(updatedStatus); } } else await refreshStatus(); }
+  try {
+    const result = await operation();
+    if (result && result.message) toast(result.message);
+    const updatedStatus = result ? (result.status || (result.public_demo ? result : null)) : null;
+    if (updatedStatus) {
+      if (!updatedStatus.public_demo && updatedStatus.data_loaded && !updatedStatus.forecasts?.length) {
+        const demo = await api("/api/public-demo/status");
+        setPublicDemoMode(true, true);
+        render({ ...demo, public_demo: true });
+      } else {
+        setPublicDemoMode(Boolean(updatedStatus.public_demo), Boolean(updatedStatus.public_demo ? state.operatorAccess : updatedStatus.data_loaded));
+        render(updatedStatus);
+      }
+    } else {
+      await refreshStatus();
+    }
+  }
   catch (error) {
     const message = error.message || "Something went wrong";
     if (/missing route\/date observations detected/i.test(message)) toast("This route has days without a count. Add the missing daily counts, or choose zero only for a confirmed no-service day.", true);
