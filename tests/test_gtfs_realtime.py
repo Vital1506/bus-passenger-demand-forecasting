@@ -1,14 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
-from pathlib import Path
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-import json
-from sqlalchemy import func, select
-
 from sqlalchemy import func, inspect, select
 
 from src import db as _db
