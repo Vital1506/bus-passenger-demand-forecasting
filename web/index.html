@@ -88,7 +88,7 @@
           <div class="hero-art" aria-hidden="true">
             <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
             <div class="route-line"></div><div class="route-node node-a"></div><div class="route-node node-b"></div><div class="route-node node-c"></div>
-            <div class="art-label label-a">R-10 <b>+8.4%</b></div><div class="art-label label-b">R-22 <b>+3.1%</b></div><div class="art-label label-c">R-35 <b>+6.7%</b></div>
+            <div class="art-label label-a">ORIGIN <b>DAILY</b></div><div class="art-label label-b">ROUTE <b>OUTLOOK</b></div><div class="art-label label-c">DEMAND <b>PLAN</b></div>
             <div class="art-center"><img src="/static/icon.svg" alt="" /></div>
           </div>
         </section>
@@ -131,7 +131,7 @@
               </details>
               <div class="training-controls"><label for="trainDays">Forecast length</label><select id="trainDays"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select><button id="trainButton" class="button button-primary" type="button">Train my forecast <span>→</span></button></div>
               <button id="demoButton" class="demo-button" type="button">Try the synthetic example <span>↗</span></button>
-              <p class="training-requirement">For a useful machine-learning forecast, build a continuous history of about 118 days per route first. One count is saved now, but it is not enough to train a reliable model yet.</p>
+              <p class="training-requirement">A weekday-average baseline needs 28 continuous days per route. At the default 7-day forecast length, machine-learning training needs at least 118 continuous days. One count is saved, but cannot create a useful forecast yet.</p>
             </div>
             <div id="publicInfo" class="public-info hidden">
               <div class="demo-callout"><span class="demo-callout-icon">i</span><div><strong>You’re viewing an example</strong><p>These forecasts use synthetic passenger counts. They are here to show how the site works, not to represent a real bus service.</p></div></div>
@@ -148,11 +148,39 @@
 
         <section class="panel table-panel" data-pages="forecasts">
           <div class="panel-heading"><div><p class="eyebrow">ROUTE LEVEL DETAIL</p><h2>Forecast by service date</h2></div><a id="downloadForecast" class="button button-quiet disabled-link" href="/api/forecast.csv" download>Download CSV <span>↓</span></a></div>
-          <div class="table-scroll"><table><thead><tr><th>SERVICE DATE</th><th>ROUTE</th><th class="numeric">PREDICTED BOARDINGS</th><th class="numeric">APPROXIMATE RANGE</th></tr></thead><tbody id="forecastRows"><tr class="empty-row"><td colspan="4">Forecast rows will appear after model training.</td></tr></tbody></table></div>
+          <div class="table-scroll"><table><thead><tr><th>SERVICE DATE</th><th>ROUTE</th><th class="numeric">PREDICTED BOARDINGS</th><th class="numeric">APPROXIMATE RANGE</th></tr></thead><tbody id="forecastRows"><tr class="empty-row"><td colspan="4">A forecast appears after 28 continuous daily counts per route.</td></tr></tbody></table></div>
           <p class="table-footnote">Approximate range based on historical backtest errors. It is not a guarantee.</p>
         </section>
 
         <section class="page-panel panel" data-pages="routes" id="routesPage">
+          <section class="route-explorer-panel" aria-labelledby="monthlyRouteExplorerTitle">
+            <div class="panel-heading"><div><p class="eyebrow">SMART ROUTE EXPLORER</p><h2 id="monthlyRouteExplorerTitle">Explore monthly route history</h2></div><span class="route-data-badge">OBSERVED MONTHLY DATA</span></div>
+            <p class="page-lead">Search a route ID or name, then review its recorded monthly boardings. These are boardings, not unique passengers. The reference dataset is from Chicago CTA in the USA.</p>
+            <div class="monthly-explorer-grid">
+              <div class="monthly-route-browser">
+                <form id="monthlyRouteSearchForm" class="monthly-route-search" role="search">
+                  <label for="monthlyRouteSearch">Search route ID or route name</label>
+                  <div class="monthly-route-search-row"><input id="monthlyRouteSearch" type="search" maxlength="100" autocomplete="off" aria-describedby="monthlyRouteSearchHelp" placeholder="e.g. 10 or South Michigan" /><button class="button button-primary" type="submit">Search</button></div>
+                  <small id="monthlyRouteSearchHelp">Search current and historical route names. Choose a result to load its observed history.</small>
+                </form>
+                <p id="monthlyRouteSearchStatus" class="monthly-route-status" role="status" aria-live="polite">Open this page to search the monthly route dataset.</p>
+                <div id="monthlyRouteResults" class="monthly-route-results" aria-label="Monthly route search results"></div>
+                <button id="monthlyRouteRetry" class="button button-quiet monthly-route-retry" type="button">Retry route search</button>
+              </div>
+              <div class="monthly-route-detail">
+                <p id="monthlyRouteHistoryEmpty" class="monthly-route-empty">Choose a route to inspect its recorded month-by-month boardings.</p>
+                <p id="monthlyRouteHistoryLoading" class="monthly-route-loading" role="status" aria-live="polite" hidden>Loading monthly route history…</p>
+                <p id="monthlyRouteHistoryError" class="monthly-route-error" role="alert" hidden></p>
+                <div id="monthlyRouteHistory" hidden>
+                  <div class="monthly-route-detail-heading"><div><h3 id="monthlyRouteTitle">Route history</h3><p id="monthlyRouteNames" class="monthly-route-names"></p></div><span class="monthly-route-unit">Monthly boardings</span></div>
+                  <div class="monthly-route-metrics"><article><small>OBSERVED MONTHS</small><strong id="monthlyRouteObserved">—</strong></article><article><small>LATEST OBSERVATION</small><strong id="monthlyRouteLatest">—</strong></article></div>
+                  <div class="monthly-chart-wrap"><svg id="monthlyRouteChart" role="img" aria-label="Observed monthly route boardings trend"></svg></div>
+                  <p id="monthlyRouteGapNote" class="monthly-route-gap-note">Gaps are not filled with zero values or estimates.</p>
+                  <div class="table-scroll monthly-history-table"><table><caption class="sr-only">Observed monthly boardings for the selected route</caption><thead><tr><th>MONTH</th><th>RECORDED ROUTE NAME</th><th class="numeric">MONTHLY BOARDINGS</th></tr></thead><tbody id="monthlyRouteHistoryRows"></tbody></table></div>
+                </div>
+              </div>
+            </div>
+          </section>
           <div class="panel-heading"><div><p class="eyebrow">SERVICE PERFORMANCE</p><h2>Route outlook</h2></div><span class="horizon-badge">Forecast totals</span></div>
           <p class="page-lead">Compare expected boardings across routes for the current forecast window. Estimates update when the connected service publishes a new forecast.</p>
           <div class="summary-cards"><article><small>Routes forecast</small><strong id="routesTotal">—</strong></article><article><small>Window boardings</small><strong id="routesBoardings">—</strong></article><article><small>Average per route / day</small><strong id="routesDailyAverage">—</strong></article><article><small>Routes to review</small><strong id="routesReview">—</strong></article></div>
@@ -193,7 +221,7 @@ Content-Type: application/json
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <dialog id="settingsDialog" class="settings-dialog"><form method="dialog"><div class="dialog-head"><div><p class="eyebrow">SECURE CONNECTION</p><h2>API access</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div><p>Connect this app to your local service or the shared service address from your administrator. The address and access key are stored on this device only.</p><label for="apiUrl">API service address</label><input id="apiUrl" type="url" autocomplete="url" placeholder="Uses the service hosting this page" /><label for="apiKey" class="key-label">Bearer access key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Paste key supplied by your administrator" /><div class="dialog-actions"><button id="clearKey" class="button button-quiet" type="button">Reset connection</button><button id="saveKey" class="button button-primary" value="default">Save connection <span>→</span></button></div></form></dialog>
+    <dialog id="settingsDialog" class="settings-dialog"><form method="dialog"><div class="dialog-head"><div><p class="eyebrow">OPERATOR ACCESS</p><h2>Company data access</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div><p>The public synthetic demo works without setup. Operators can enter the access key supplied by their administrator. The key is held in memory for this page only and is never saved in browser storage.</p><label for="apiKey" class="key-label">Operator bearer key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Optional · supplied by your administrator" /><div class="dialog-actions"><button id="clearKey" class="button button-quiet" type="button">Clear operator key</button><button id="saveKey" class="button button-primary" value="default">Use key for this page <span>→</span></button></div></form></dialog>
     <script type="module" src="/static/app.js"></script>
   </body>
 </html>

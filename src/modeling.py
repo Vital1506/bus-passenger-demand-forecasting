@@ -61,3 +61,38 @@ def seasonal_naive_forecast(history: pd.DataFrame, horizon: int) -> pd.DataFrame
         working = pd.concat([working, daily.rename(columns={"baseline": "passengers"})], ignore_index=True).sort_values(["route_id", "service_date"]).reset_index(drop=True)
         output.extend(rows)
     return pd.DataFrame(output)
+
+
+def weekday_average_forecast(history: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    """Build a transparent route-wise weekday-average forecast from 28 days."""
+    if horizon < 1 or horizon > 90:
+        raise ValueError("days must be between 1 and 90")
+    working = history.copy()
+    working["service_date"] = pd.to_datetime(working["service_date"]).dt.normalize()
+    routes = sorted(working["route_id"].astype(str).unique())
+    last_date = working["service_date"].max()
+    rows = []
+    for route in routes:
+        route_history = working.loc[working["route_id"].astype(str).eq(route)].sort_values("service_date").tail(28).copy()
+        if len(route_history) < 28:
+            raise ValueError(f"Need at least 28 continuous calendar days for route {route} to build the weekday-average forecast")
+        route_history["weekday"] = route_history["service_date"].dt.dayofweek
+        averages = route_history.groupby("weekday")["passengers"].mean()
+        deviations = (route_history["passengers"] - route_history["weekday"].map(averages)).abs()
+        error_band = float(deviations.quantile(0.90))
+        for step in range(1, horizon + 1):
+            service_date = last_date + pd.Timedelta(days=step)
+            prediction = max(0.0, float(averages.get(service_date.dayofweek, route_history["passengers"].mean())))
+            rows.append({
+                "service_date": service_date,
+                "route_id": route,
+                "predicted_passengers": prediction,
+                "lower_90_approx": max(0.0, prediction - error_band),
+                "upper_90_approx": prediction + error_band,
+            })
+    forecast = pd.DataFrame(rows)
+    forecast["predicted_passengers"] = forecast["predicted_passengers"].round(2)
+    forecast["lower_90_approx"] = forecast["lower_90_approx"].round(2)
+    forecast["upper_90_approx"] = forecast["upper_90_approx"].round(2)
+    forecast["service_date"] = forecast["service_date"].dt.strftime("%Y-%m-%d")
+    return forecast

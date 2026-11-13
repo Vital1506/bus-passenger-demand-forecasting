@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
+from .modeling import weekday_average_forecast
+from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
 from .route_identity import canonicalize_manual_route_id
 from .schedule_import import schedules_to_synthetic_counts
 from .train import train_project
@@ -46,15 +48,19 @@ def user_data_dir() -> Path:
 DATA_DIR = user_data_dir()
 ARTIFACT_DIR = DATA_DIR / "artifacts"
 DATA_PATH = DATA_DIR / "daily_ridership.csv"
+MONTHLY_DATA_DIR = DATA_DIR / "monthly"
+MONTHLY_DATA_PATH = MONTHLY_DATA_DIR / "cta_monthly_ridership.json"
 MODEL_PATH = ARTIFACT_DIR / "model.joblib"
 METRICS_PATH = ARTIFACT_DIR / "backtest_metrics.json"
 PREDICTIONS_PATH = ARTIFACT_DIR / "backtest_predictions.csv"
 HOLDOUT_PREDICTIONS_PATH = ARTIFACT_DIR / "holdout_predictions.csv"
 FORECAST_PATH = DATA_DIR / "forecast.csv"
+FORECAST_META_PATH = DATA_DIR / "forecast_metadata.json"
 META_PATH = DATA_DIR / "data_source.json"
 AUDIT_PATH = DATA_DIR / "ingest_audit.jsonl"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PIPELINE_LOCK = threading.Lock()
+MONTHLY_IMPORT_LOCK = threading.Lock()
 PUBLIC_DEMO_LOCK = threading.Lock()
 PUBLIC_DEMO_CACHE: dict | None = None
 PUBLIC_DEMO_ARTIFACTS: dict[str, Path] = {}
@@ -91,6 +97,13 @@ def authorize(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Enter the API access key in app settings")
 
 
+def require_public_monthly_read() -> None:
+    """Keep the narrow public monthly read surface disabled unless explicitly enabled."""
+    enabled = os.getenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "false").strip().lower() in {"1", "true", "yes"}
+    if not enabled:
+        raise HTTPException(status_code=404, detail="Public monthly route access is disabled")
+
+
 def protect_pipeline():
     """Serialize uploads, training runs, and forecast writes."""
     if not PIPELINE_LOCK.acquire(blocking=False):
@@ -99,6 +112,16 @@ def protect_pipeline():
         yield
     finally:
         PIPELINE_LOCK.release()
+
+
+def protect_monthly_import():
+    """Serialize monthly imports independently from daily data operations."""
+    if not MONTHLY_IMPORT_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A monthly data import is already in progress")
+    try:
+        yield
+    finally:
+        MONTHLY_IMPORT_LOCK.release()
 
 
 class TrainRequest(BaseModel):
@@ -203,6 +226,10 @@ def api_safe(value):
 
 def status_payload() -> dict:
     metadata = read_metadata()
+    try:
+        forecast_metadata = json.loads(FORECAST_META_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        forecast_metadata = {}
     result = {
         "data_loaded": DATA_PATH.exists(),
         "source": metadata.get("source", "none"),
@@ -213,6 +240,8 @@ def status_payload() -> dict:
         "route_count": 0,
         "latest_observed_date": None,
         "model_trained": MODEL_PATH.exists(),
+        "forecast_mode": forecast_metadata.get("mode", "machine_learning" if MODEL_PATH.exists() else "weekday_average" if FORECAST_PATH.exists() else None) if FORECAST_PATH.exists() else None,
+        "model_updated_at": pd.Timestamp(MODEL_PATH.stat().st_mtime, unit="s", tz="UTC").isoformat() if MODEL_PATH.exists() else None,
         "trained_through": None,
         "horizon_days": None,
         "metrics": None,
@@ -256,19 +285,43 @@ def status_payload() -> dict:
 def save_forecast(days: int, missing_days: str = "error") -> pd.DataFrame:
     if not DATA_PATH.exists():
         raise HTTPException(status_code=409, detail="Upload daily route counts or load demo data first")
-    if not MODEL_PATH.exists():
-        raise HTTPException(status_code=409, detail="Train a model before generating a forecast")
     try:
-        forecast = build_forecast(DATA_PATH, MODEL_PATH, days, missing_days)
+        if MODEL_PATH.exists():
+            forecast = build_forecast(DATA_PATH, MODEL_PATH, days, missing_days)
+        else:
+            data = load_data(str(DATA_PATH))
+            dense = complete_daily_series(data, missing_days=missing_days)
+            forecast = weekday_average_forecast(dense, days)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    temporary = FORECAST_PATH.with_suffix(".tmp")
-    forecast.to_csv(temporary, index=False)
-    temporary.replace(FORECAST_PATH)
+    persist_forecast(forecast, "machine_learning" if MODEL_PATH.exists() else "weekday_average")
     return forecast
 
 
+def save_weekday_baseline(days: int, missing_days: str = "error") -> pd.DataFrame:
+    """Save the transparent weekday-average forecast for histories below ML threshold."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=409, detail="Upload daily route counts first")
+    try:
+        data = complete_daily_series(load_data(str(DATA_PATH)), missing_days=missing_days)
+        forecast = weekday_average_forecast(data, days)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    persist_forecast(forecast, "weekday_average")
+    return forecast
+
+
+def persist_forecast(forecast: pd.DataFrame, mode: str) -> None:
+    temporary = FORECAST_PATH.with_suffix(".tmp")
+    forecast.to_csv(temporary, index=False)
+    temporary.replace(FORECAST_PATH)
+    metadata_temp = FORECAST_META_PATH.with_suffix(".tmp")
+    metadata_temp.write_text(json.dumps({"mode": mode, "updated_at_utc": pd.Timestamp.now(tz="UTC").isoformat()}), encoding="utf-8")
+    metadata_temp.replace(FORECAST_META_PATH)
+
+
 @app.get("/api/health")
+@app.get("/health", include_in_schema=False)
 def health() -> dict:
     return {"status": "ok", "version": app.version}
 
@@ -276,6 +329,154 @@ def health() -> dict:
 @app.get("/api/status", dependencies=[Depends(authorize)])
 def get_status() -> dict:
     return status_payload()
+
+
+@app.get("/api/monthly-data/status", dependencies=[Depends(authorize)])
+def get_monthly_data_status() -> dict:
+    """Inspect the separate monthly CTA store without creating or changing it."""
+    try:
+        return MonthlyRidershipStore(MONTHLY_DATA_PATH).status()
+    except MonthlyStoreError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _monthly_route_names(records: list[dict]) -> list[str]:
+    """Return distinct non-empty route names in their first-observed order."""
+    names = []
+    seen = set()
+    for record in records:
+        name = str(record.get("route_name", "")).strip()
+        normalized = name.casefold()
+        if name and normalized not in seen:
+            names.append(name)
+            seen.add(normalized)
+    return names
+
+
+def _month_index(month_start: str) -> int:
+    year, month, _day = (int(part) for part in month_start.split("-"))
+    return year * 12 + month - 1
+
+
+def _monthly_route_summary(route_id: str, records: list[dict]) -> dict:
+    ordered = sorted(records, key=lambda record: record["month_start"])
+    first_month = ordered[0]["month_start"]
+    latest = ordered[-1]
+    return {
+        "route_id": route_id,
+        "route_name": next((record["route_name"].strip() for record in reversed(ordered) if record["route_name"].strip()), ""),
+        "historical_route_names": _monthly_route_names(ordered),
+        "first_month": first_month,
+        "last_month": latest["month_start"],
+        "observed_months": len(ordered),
+        "latest_month": latest["month_start"],
+        "latest_boardings": latest["boardings"],
+    }
+
+
+@app.get("/api/monthly-data/routes", dependencies=[Depends(authorize)])
+def list_monthly_routes(
+    q: str | None = Query(default=None, max_length=100, description="Case-insensitive substring search across route IDs and current or historical names"),
+    limit: int = Query(default=25, ge=1, le=100),
+) -> dict:
+    """Search routes from the separate monthly dataset; never accesses daily data."""
+    try:
+        records = MonthlyRidershipStore(MONTHLY_DATA_PATH).observations()
+    except MonthlyStoreError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    by_route: dict[str, list[dict]] = {}
+    for record in records:
+        by_route.setdefault(record["route_id"], []).append(record)
+
+    query = (q or "").strip().casefold()
+    matching = []
+    for route_id, route_records in by_route.items():
+        summary = _monthly_route_summary(route_id, route_records)
+        searchable = [route_id, *summary["historical_route_names"]]
+        if not query or any(query in value.casefold() for value in searchable):
+            matching.append(summary)
+    matching.sort(key=lambda route: (route["route_id"].casefold(), route["route_id"]))
+    return {"query": q, "count": min(len(matching), limit), "total_matches": len(matching), "limit": limit, "routes": matching[:limit]}
+
+
+@app.get("/api/monthly-data/routes/{route_id}/history", dependencies=[Depends(authorize)])
+def get_monthly_route_history(route_id: str) -> dict:
+    """Return observed monthly boarding records without filling gaps."""
+    normalized_route_id = route_id.strip()
+    if not normalized_route_id:
+        raise HTTPException(status_code=422, detail="route_id must not be blank")
+    try:
+        records = [
+            record for record in MonthlyRidershipStore(MONTHLY_DATA_PATH).observations()
+            if record["route_id"] == normalized_route_id
+        ]
+    except MonthlyStoreError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not records:
+        raise HTTPException(status_code=404, detail="No monthly history found for this route ID")
+
+    ordered = sorted(records, key=lambda record: record["month_start"])
+    summary = _monthly_route_summary(normalized_route_id, ordered)
+    month_span = _month_index(summary["last_month"]) - _month_index(summary["first_month"]) + 1
+    return {
+        "route_id": normalized_route_id,
+        "route_name": summary["route_name"],
+        "historical_route_names": summary["historical_route_names"],
+        "first_month": summary["first_month"],
+        "last_month": summary["last_month"],
+        "observed_months": summary["observed_months"],
+        "missing_months": month_span - summary["observed_months"],
+        "boardings_description": "Recorded monthly boardings; these are boardings, not unique passengers.",
+        "records": [
+            {"month_start": record["month_start"], "route_name": record["route_name"], "boardings": record["boardings"]}
+            for record in ordered
+        ],
+    }
+
+
+@app.get("/api/public/monthly-data/routes", dependencies=[Depends(require_public_monthly_read)])
+def public_monthly_routes(
+    q: str | None = Query(default=None, max_length=100, description="Case-insensitive substring search across route IDs and current or historical names"),
+    limit: int = Query(default=25, ge=1, le=100),
+) -> dict:
+    """Public, read-only route discovery when explicitly enabled by deployment config."""
+    return list_monthly_routes(q=q, limit=limit)
+
+
+@app.get("/api/public/monthly-data/routes/{route_id}/history", dependencies=[Depends(require_public_monthly_read)])
+def public_monthly_route_history(route_id: str) -> dict:
+    """Public, read-only monthly route history when explicitly enabled."""
+    return get_monthly_route_history(route_id=route_id)
+
+
+@app.post(
+    "/api/monthly-data/upload",
+    dependencies=[Depends(authorize), Depends(protect_monthly_import)],
+)
+def upload_monthly_data(
+    file: UploadFile = File(...),
+    source_info: str | None = Form(default=None, max_length=500),
+) -> dict:
+    """Validate and transactionally upsert a CTA monthly CSV; never trains a model."""
+    if not file.filename or Path(file.filename).suffix.lower() != ".csv":
+        raise HTTPException(status_code=415, detail="Upload a CSV file")
+    contents = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="CSV upload exceeds the 20 MB limit")
+    try:
+        store = MonthlyRidershipStore(MONTHLY_DATA_PATH)
+        imported = store.import_csv(contents, file.filename, source_info)
+        status = store.status()
+    except MonthlyDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except MonthlyStoreError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "message": "Monthly observations imported. No model was trained.",
+        "import": imported,
+        "status": status,
+    }
 
 
 @app.get("/api/public-demo/status")
@@ -426,27 +627,35 @@ def upload_data(
     finally:
         temporary_path.unlink(missing_ok=True)
     if imported_schedule:
-        for artifact in (MODEL_PATH, METRICS_PATH, PREDICTIONS_PATH, HOLDOUT_PREDICTIONS_PATH, FORECAST_PATH, ARTIFACT_DIR / "error_analysis.json"):
+        for artifact in (MODEL_PATH, METRICS_PATH, PREDICTIONS_PATH, HOLDOUT_PREDICTIONS_PATH, FORECAST_PATH, FORECAST_META_PATH, ARTIFACT_DIR / "error_analysis.json"):
             artifact.unlink(missing_ok=True)
     source = "synthetic schedule demo data" if imported_schedule else "company upload"
     source_system = "synthetic_schedule_scenario" if imported_schedule else "manual_csv"
     write_metadata(source, source_system, len(data), int(data["route_id"].nunique()))
     record_audit_event("synthetic_schedule_import" if imported_schedule else "replace_upload", source_system, len(data), int(data["route_id"].nunique()))
+    FORECAST_PATH.unlink(missing_ok=True)
+    FORECAST_META_PATH.unlink(missing_ok=True)
     if imported_schedule:
         return {
             "message": f"Timetable accepted for {int(data['route_id'].nunique())} routes. Generated 730 days of synthetic demonstration counts from schedule frequency; these are NOT measured passenger counts. Train the model to view the illustrative forecast.",
             "status": status_payload(),
         }
-    forecast_message = "Data saved. Train a model to create the first forecast."
+    forecast_message = "Data saved. Add at least 28 continuous days per route for a weekday-average forecast."
     if MODEL_PATH.exists():
         try:
             forecast = build_forecast(DATA_PATH, MODEL_PATH, min(7, int(status_payload().get("horizon_days") or 7)), missing_days)
-            forecast.to_csv(FORECAST_PATH.with_suffix(".tmp"), index=False)
-            FORECAST_PATH.with_suffix(".tmp").replace(FORECAST_PATH)
+            persist_forecast(forecast, "machine_learning")
             forecast_message = "Data saved and the forecast refreshed using the current model."
         except ValueError as exc:
             FORECAST_PATH.unlink(missing_ok=True)
+            FORECAST_META_PATH.unlink(missing_ok=True)
             forecast_message = f"Data saved. Retrain the model before forecasting: {exc}"
+    elif data.groupby("route_id")["service_date"].nunique().min() >= 28:
+        try:
+            save_weekday_baseline(7, missing_days)
+            forecast_message = "Data saved and a weekday-average baseline forecast was updated."
+        except HTTPException as exc:
+            forecast_message = f"Data saved. Baseline forecast is not ready: {exc.detail}"
     return {"message": forecast_message, "status": status_payload()}
 
 
@@ -498,18 +707,25 @@ def ingest_daily_counts(request: DataIngestRequest) -> dict:
     route_count = int(merged["route_id"].nunique())
     write_metadata("company feed", source_system, len(merged), route_count)
     record_audit_event("upsert", source_system, len(incoming), route_count)
-    forecast_message = "Counts ingested. Train a model to create the first forecast."
+    FORECAST_PATH.unlink(missing_ok=True)
+    FORECAST_META_PATH.unlink(missing_ok=True)
+    forecast_message = "Counts ingested. Add at least 28 continuous days per route for a weekday-average forecast."
     if MODEL_PATH.exists():
         try:
             horizon = min(90, int(status_payload().get("horizon_days") or 7))
             forecast = build_forecast(DATA_PATH, MODEL_PATH, horizon, request.missing_days)
-            temporary = FORECAST_PATH.with_suffix(".tmp")
-            forecast.to_csv(temporary, index=False)
-            temporary.replace(FORECAST_PATH)
+            persist_forecast(forecast, "machine_learning")
             forecast_message = "Counts ingested and the forecast refreshed using the current model."
         except ValueError as exc:
             FORECAST_PATH.unlink(missing_ok=True)
+            FORECAST_META_PATH.unlink(missing_ok=True)
             forecast_message = f"Counts ingested. Retrain the model before forecasting: {exc}"
+    elif merged.groupby("route_id")["service_date"].nunique().min() >= 28:
+        try:
+            save_weekday_baseline(7, request.missing_days)
+            forecast_message = "Counts ingested and a weekday-average baseline forecast was updated."
+        except HTTPException as exc:
+            forecast_message = f"Counts ingested. Baseline forecast is not ready: {exc.detail}"
     return {
         "message": forecast_message,
         "inserted_records": inserted_count,
@@ -530,6 +746,7 @@ def load_demo_data() -> dict:
     replace_path.replace(DATA_PATH)
     MODEL_PATH.unlink(missing_ok=True)
     FORECAST_PATH.unlink(missing_ok=True)
+    FORECAST_META_PATH.unlink(missing_ok=True)
     write_metadata("synthetic demo data", "bundled_sample", len(data), int(data["route_id"].nunique()))
     record_audit_event("load_synthetic_demo", "bundled_sample", len(data), int(data["route_id"].nunique()))
     return {"message": "Synthetic demo data loaded. Train it to generate a sample forecast.", "status": status_payload()}
@@ -539,6 +756,22 @@ def load_demo_data() -> dict:
 def train_model(request: TrainRequest) -> dict:
     if not DATA_PATH.exists():
         raise HTTPException(status_code=409, detail="Upload daily route counts or load demo data first")
+    # A 28-day weekday average is useful before the longer history required by ML.
+    try:
+        data = load_data(str(DATA_PATH))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Saved route data could not be validated: {exc}") from exc
+    per_route_days = data.groupby("route_id")["service_date"].nunique()
+    holdout_days = max(request.horizon, ((28 + request.horizon - 1) // request.horizon) * request.horizon)
+    minimum_ml_days = max(90, 29 + request.horizon * request.folds) + holdout_days
+    if per_route_days.empty or int(per_route_days.min()) < minimum_ml_days:
+        forecast = save_weekday_baseline(request.horizon, request.missing_days)
+        return {
+            "message": f"Weekday-average baseline forecast updated. Add at least {minimum_ml_days} continuous days per route to train the machine-learning model for these settings.",
+            "mode": "weekday_average",
+            "rows": int(len(forecast)),
+            "status": status_payload(),
+        }
     try:
         result = train_project(
             data_path=DATA_PATH,
@@ -567,7 +800,8 @@ def refresh_forecast(request: ForecastRequest) -> dict:
 @app.get("/api/forecast.csv", dependencies=[Depends(authorize)])
 def download_forecast(route_id: str | None = Query(default=None, min_length=1, max_length=128)) -> Response:
     if not FORECAST_PATH.exists():
-        raise HTTPException(status_code=404, detail="No forecast has been generated yet")
+        content = "service_date,route_id,predicted_passengers,lower_90_approx,upper_90_approx\n"
+        return Response(content=content, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="bus_demand_forecast.csv"', "X-Forecast-Status": "not-ready"})
     forecast = pd.read_csv(FORECAST_PATH)
     if route_id:
         forecast = forecast.loc[forecast["route_id"].astype(str) == route_id]
@@ -580,9 +814,9 @@ def download_forecast(route_id: str | None = Query(default=None, min_length=1, m
     )
 
 
-@app.get("/api/template.csv", dependencies=[Depends(authorize)])
+@app.get("/api/template.csv")
 def download_template() -> Response:
-    return FileResponse(project_path("data/sample_daily_ridership.csv"), media_type="text/csv", filename="daily_route_counts_template.csv")
+    return Response(content="service_date,route_id,passengers\n", media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="daily_route_counts_template.csv"'})
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)

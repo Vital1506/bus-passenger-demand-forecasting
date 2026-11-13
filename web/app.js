@@ -1,16 +1,18 @@
 import { canonicalRoute, matchDestinations, normalizePlaceLabel, placeSuggestions } from "./route_catalog.mjs";
+import { buildMonthlyRouteChartModel } from "./monthly_route_chart.mjs";
 
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null };
+const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null, monthlySearchTimer: null, monthlySearchRequest: 0, monthlyHistoryRequest: 0, selectedMonthlyRoute: null };
 
-function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
-function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
+let operatorKeyInMemory = "";
+function accessKey() { return operatorKeyInMemory; }
+function apiBase() { return window.location.origin; }
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (accessKey()) headers.set("Authorization", `Bearer ${accessKey()}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 90000);
+  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 9000 : 90000);
   try {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
@@ -19,6 +21,26 @@ async function api(path, options = {}) {
     return payload;
   } catch (error) {
     if (error?.name === "AbortError") throw new Error("The forecast service took too long to respond. Retry or continue to the dashboard.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+async function publicMonthlyApi(path) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${apiBase()}${path}`, { headers: { Accept: "application/json" }, signal: controller.signal, cache: "no-store" });
+    const type = response.headers.get("content-type") || "";
+    const payload = type.includes("json") ? await response.json() : await response.text();
+    if (!response.ok) {
+      const error = new Error(payload?.detail || payload || `Request failed (${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("Route data took too long to load. Check the connection and retry.");
     throw error;
   } finally {
     window.clearTimeout(timeout);
@@ -70,7 +92,7 @@ function renderTable(rows) {
   const visibleRows = filterForecastRows(rows);
   $("#downloadForecast").classList.toggle("disabled-link", !visibleRows.length);
   if (!visibleRows.length) {
-    target.innerHTML = '<tr class="empty-row"><td colspan="4">Forecast rows will appear after model training.</td></tr>';
+    target.innerHTML = '<tr class="empty-row"><td colspan="4">A forecast appears after 28 continuous daily counts per route.</td></tr>';
     return;
   }
   target.innerHTML = visibleRows.slice(0, 250).map((row) => `<tr><td>${prettyDate(row.service_date)}</td><td><span class="route-pill">${escapeText(row.route_id)}</span></td><td class="numeric passenger-count">${Math.round(Number(row.predicted_passengers)).toLocaleString()}</td><td class="numeric">${Math.round(Number(row.lower_90_approx)).toLocaleString()} – ${Math.round(Number(row.upper_90_approx)).toLocaleString()}</td></tr>`).join("");
@@ -136,13 +158,15 @@ function render(data) {
   $("#latestDate").textContent = prettyDate(data.latest_observed_date);
   $("#modelWape").textContent = percent(data.metrics?.model?.wape);
   const ml = data.metrics?.model?.wape == null ? Number.NaN : Number(data.metrics.model.wape), baseline = data.metrics?.seasonal_naive?.wape == null ? Number.NaN : Number(data.metrics.seasonal_naive.wape);
-  $("#modelCompare").textContent = Number.isFinite(ml) && Number.isFinite(baseline) ? `Baseline ${percent(baseline)} · ${ml <= baseline ? "model leads" : "baseline leads"}` : "Rolling time based validation";
-  $("#horizonLabel").textContent = data.model_trained ? `${data.horizon_days} days` : "—";
-  $("#modelState").textContent = data.model_trained ? `Trained through ${prettyDate(data.trained_through)}` : "No model trained";
+  $("#modelCompare").textContent = Number.isFinite(ml) && Number.isFinite(baseline) ? `Baseline ${percent(baseline)} · ${ml <= baseline ? "model leads" : "baseline leads"}` : data.forecast_mode === "weekday_average" ? "Weekday baseline active · ML not trained" : "Rolling time based validation";
+  $("#horizonLabel").textContent = data.forecasts?.length ? `${new Set(data.forecasts.map((row) => row.service_date)).size} days` : "—";
+  const updatedAt = data.forecast_mode === "weekday_average" ? data.forecast_updated_at : data.model_updated_at || data.forecast_updated_at;
+  const modelUpdated = updatedAt ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(updatedAt)) : "";
+  $("#modelState").textContent = data.forecast_mode === "weekday_average" ? `Weekday-average baseline · updated ${modelUpdated || "just now"}` : data.model_trained ? `ML trained through ${prettyDate(data.trained_through)} · updated ${modelUpdated || "time unavailable"}` : "No model trained";
   const source = ({ "synthetic demo data": "Synthetic sample data", "synthetic schedule demo data": "Synthetic timetable scenario", "company upload": "Operator data uploaded", "company feed": "Daily counts entered or imported" })[data.source] || "Waiting for data";
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
-  $("#workflowNote").textContent = state.publicDemo ? (state.operatorAccess ? "Synthetic preview shown because no operator data is loaded yet. Upload daily counts, or a timetable to create a labelled synthetic scenario." : "This public preview is read-only. An authorized operator key is required to upload data or train a model.") : data.source === "synthetic schedule demo data" ? "This timetable-based scenario is synthetic, not observed passenger demand. Replace it with actual passenger counts before operational use." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
+  $("#workflowNote").textContent = state.publicDemo ? (state.operatorAccess ? "You are viewing a read-only SYNTHETIC preview. Operator data may be present, but it has not produced a forecast yet. Synthetic values are never mixed with your records." : "This read-only preview uses SYNTHETIC passenger counts. An authorized operator key is required to upload data or train a model.") : data.source === "synthetic schedule demo data" ? "This timetable-based scenario is synthetic, not observed passenger demand. Replace it with actual passenger counts before operational use." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : data.forecast_mode === "weekday_average" ? "Forecast uses each route's recent same-weekday average. It is a transparent baseline, not ML. The ML history requirement depends on the selected forecast length." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
   syncForecastRoutes(data.forecasts);
   renderChart(data.forecasts);
   renderTable(data.forecasts);
@@ -152,10 +176,169 @@ function render(data) {
 const PAGE_INFO = {
   overview: ["Start here", "Choose the example or record a daily passenger count."],
   forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
-  routes: ["Routes", "Compare forecast totals and validation scores by route."],
+  routes: ["Routes", "Search route history and compare forecast totals."],
   data: ["My data", "See which passenger counts are saved and when they were updated."],
   model: ["How it works", "A plain-language guide to the data and forecast."]
 };
+
+function formatMonth(value) {
+  const match = /^(\d{4})-(\d{2})-01$/.exec(String(value || ""));
+  if (!match) return String(value || "—");
+  return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)));
+}
+function formatMonthlyBoardings(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(amount) : "—";
+}
+function setMonthlySearchMessage(message, stateName = "info") {
+  const status = $("#monthlyRouteSearchStatus");
+  status.textContent = message;
+  status.dataset.state = stateName;
+}
+function setMonthlyHistoryState(stateName, message = "") {
+  $("#monthlyRouteHistoryLoading").hidden = stateName !== "loading";
+  $("#monthlyRouteHistoryError").hidden = stateName !== "error";
+  $("#monthlyRouteHistoryError").textContent = stateName === "error" ? message : "";
+  $("#monthlyRouteHistoryEmpty").hidden = stateName !== "empty";
+  $("#monthlyRouteHistory").hidden = stateName !== "ready";
+}
+function addSvgElement(svg, name, attributes = {}, text = "") {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+  if (text) element.textContent = text;
+  svg.append(element);
+  return element;
+}
+function renderMonthlyRouteChart(records, routeId) {
+  const svg = $("#monthlyRouteChart");
+  const model = buildMonthlyRouteChartModel(records);
+  const width = Math.max(320, svg.parentElement.clientWidth || 640);
+  const height = 260;
+  const pad = { left: 56, right: 16, top: 22, bottom: 43 };
+  const span = model.last_month_index - model.first_month_index;
+  const max = model.max_boardings > 0 ? model.max_boardings * 1.12 : 1;
+  const x = (point) => pad.left + (span ? (point.month_index - model.first_month_index) / span : 0.5) * (width - pad.left - pad.right);
+  const y = (value) => height - pad.bottom - (value / max) * (height - pad.top - pad.bottom);
+  svg.replaceChildren();
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("aria-label", `Observed monthly boardings for route ${routeId}. Gaps are left blank; no monthly values are filled or estimated.`);
+  addSvgElement(svg, "title", {}, `Monthly boardings for ${routeId}`);
+  addSvgElement(svg, "desc", {}, "Each point is an observed monthly record. Lines break where one or more months have no observation.");
+  const gridColor = getComputedStyle(document.documentElement).getPropertyValue("--line").trim() || "#e5dfed";
+  const textColor = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#716b83";
+  const chartColor = getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#7851c8";
+  for (let tick = 0; tick <= 4; tick += 1) {
+    const value = max * (tick / 4), yy = y(value);
+    addSvgElement(svg, "line", { x1: pad.left, y1: yy, x2: width - pad.right, y2: yy, stroke: gridColor });
+    addSvgElement(svg, "text", { x: pad.left - 8, y: yy + 3, "text-anchor": "end", fill: textColor, "font-size": 10 }, formatMonthlyBoardings(value));
+  }
+  for (const segment of model.segments) {
+    if (segment.length < 2) continue;
+    const path = segment.map((point, index) => `${index ? "L" : "M"}${x(point).toFixed(1)},${y(point.boardings).toFixed(1)}`).join(" ");
+    addSvgElement(svg, "path", { d: path, fill: "none", stroke: chartColor, "stroke-width": 2.5, "stroke-linecap": "round", "stroke-linejoin": "round" });
+  }
+  const labelStep = Math.max(1, Math.ceil(model.points.length / 7));
+  model.points.forEach((point, index) => {
+    const circle = addSvgElement(svg, "circle", { cx: x(point), cy: y(point.boardings), r: 4, fill: "#fff", stroke: chartColor, "stroke-width": 2 });
+    addSvgElement(circle, "title", {}, `${formatMonth(point.month_start)} · ${formatMonthlyBoardings(point.boardings)} monthly boardings`);
+    if (index % labelStep === 0 || index === model.points.length - 1) {
+      addSvgElement(svg, "text", { x: x(point), y: height - 13, "text-anchor": "middle", fill: textColor, "font-size": 10 }, formatMonth(point.month_start));
+    }
+  });
+}
+function renderMonthlyRouteHistory(history) {
+  const records = Array.isArray(history.records) ? history.records : [];
+  if (!records.length) throw new Error("No observed monthly boarding records are available for this route.");
+  $("#monthlyRouteTitle").textContent = `${history.route_id} · ${history.route_name || "Route name unavailable"}`;
+  $("#monthlyRouteObserved").textContent = `${Number(history.observed_months).toLocaleString()} observed months`;
+  $("#monthlyRouteLatest").textContent = `${formatMonth(history.last_month)} · ${formatMonthlyBoardings(records.at(-1).boardings)} boardings`;
+  const names = Array.isArray(history.historical_route_names) ? history.historical_route_names : [];
+  $("#monthlyRouteNames").textContent = names.length > 1 ? `Route names recorded over time: ${names.join(" · ")}` : names.length ? `Route name: ${names[0]}` : "No route name is recorded.";
+  $("#monthlyRouteGapNote").textContent = history.missing_months > 0
+    ? `${Number(history.missing_months).toLocaleString()} month${history.missing_months === 1 ? " is" : "s are"} missing within this route’s observed date range. Gaps remain blank; no zero values or estimates are added.`
+    : "No missing months within this route’s observed date range. Every plotted point is an observed monthly record.";
+  renderMonthlyRouteChart(records, history.route_id);
+
+  const tbody = $("#monthlyRouteHistoryRows");
+  tbody.replaceChildren();
+  for (const record of records) {
+    const row = document.createElement("tr");
+    for (const value of [formatMonth(record.month_start), record.route_name || "—", formatMonthlyBoardings(record.boardings)]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    row.lastElementChild.classList.add("numeric");
+    tbody.append(row);
+  }
+  setMonthlyHistoryState("ready");
+}
+async function selectMonthlyRoute(route) {
+  const requestId = ++state.monthlyHistoryRequest;
+  state.selectedMonthlyRoute = route.route_id;
+  document.querySelectorAll(".monthly-route-result").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.routeId === route.route_id)));
+  setMonthlyHistoryState("loading");
+  try {
+    const history = await publicMonthlyApi(`/api/public/monthly-data/routes/${encodeURIComponent(route.route_id)}/history`);
+    if (requestId !== state.monthlyHistoryRequest) return;
+    renderMonthlyRouteHistory(history);
+  } catch (error) {
+    if (requestId !== state.monthlyHistoryRequest) return;
+    const message = error.status === 404
+      ? "Monthly history for this route is unavailable. Refresh the search and select a listed route."
+      : "Could not load route history. Check the connection and try again.";
+    setMonthlyHistoryState("error", message);
+  }
+}
+function appendMonthlyRouteResult(list, route) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "monthly-route-result";
+  button.dataset.routeId = route.route_id;
+  button.setAttribute("aria-pressed", String(state.selectedMonthlyRoute === route.route_id));
+  const heading = document.createElement("strong");
+  heading.textContent = `${route.route_id} · ${route.route_name || "Route name unavailable"}`;
+  const summary = document.createElement("span");
+  summary.textContent = `Latest ${formatMonth(route.latest_month)} · ${formatMonthlyBoardings(route.latest_boardings)} boardings · ${Number(route.observed_months).toLocaleString()} observed months`;
+  button.append(heading, summary);
+  button.addEventListener("click", () => { void selectMonthlyRoute(route); });
+  list.append(button);
+}
+async function searchMonthlyRoutes(query = "") {
+  const requestId = ++state.monthlySearchRequest;
+  const trimmed = query.trim();
+  const list = $("#monthlyRouteResults");
+  list.replaceChildren();
+  setMonthlySearchMessage("Searching monthly route records…", "loading");
+  try {
+    const params = new URLSearchParams({ limit: "25" });
+    if (trimmed) params.set("q", trimmed);
+    const result = await publicMonthlyApi(`/api/public/monthly-data/routes?${params}`);
+    if (requestId !== state.monthlySearchRequest) return;
+    const routes = Array.isArray(result.routes) ? result.routes : [];
+    if (!routes.length) {
+      setMonthlySearchMessage(trimmed ? "No routes matched this search. Try a route ID or another name." : "No monthly route data is available yet. Route data has not yet been imported.", "empty");
+      return;
+    }
+    for (const route of routes) appendMonthlyRouteResult(list, route);
+    setMonthlySearchMessage(`${Number(result.total_matches).toLocaleString()} matching route${result.total_matches === 1 ? "" : "s"}. Select a route to inspect its monthly history.`, "ready");
+  } catch (error) {
+    if (requestId !== state.monthlySearchRequest) return;
+    const message = error.status === 404
+      ? "The monthly Route Explorer is not enabled on this service yet."
+      : "Could not connect to monthly route data. Check the connection and retry.";
+    setMonthlySearchMessage(message, "error");
+  }
+}
+function setupMonthlyRouteExplorer() {
+  const search = $("#monthlyRouteSearch");
+  $("#monthlyRouteSearchForm").addEventListener("submit", (event) => { event.preventDefault(); clearTimeout(state.monthlySearchTimer); void searchMonthlyRoutes(search.value); });
+  search.addEventListener("input", () => {
+    clearTimeout(state.monthlySearchTimer);
+    state.monthlySearchTimer = setTimeout(() => { void searchMonthlyRoutes(search.value); }, 250);
+  });
+  $("#monthlyRouteRetry").addEventListener("click", () => { void searchMonthlyRoutes(search.value); });
+}
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function renderPlaceSuggestions(input, list, values, preferred = []) {
   if (!input || !list) return;
@@ -326,6 +509,7 @@ function navigate(view, updateHash = true) {
   $("#pageSummary").textContent = PAGE_INFO[view][1];
   if (updateHash && location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   if (view === "forecasts" && state.data) renderChart(state.data.forecasts);
+  if (view === "routes") void searchMonthlyRoutes($("#monthlyRouteSearch").value);
 }
 function readRoutePlans() {
   try {
@@ -474,22 +658,23 @@ async function refreshStatus() {
   let connectionError = "";
   try {
     if (state.opening) {
-      setSplashStatus("Checking the forecast service…");
+      setSplashStatus("Waking up the server (up to 60s)…");
       clearTimeout(state.openingMessageTimer);
       state.openingMessageTimer = setTimeout(() => {
-        if (state.opening) setSplashStatus("Waking the demo service… Free hosting can take a little longer after idle.");
+        if (state.opening) setSplashStatus("Waking up the server (up to 60s)…");
       }, 8000);
     }
+    if (state.opening) await waitForServer();
     if (accessKey()) {
       try {
         const operatorStatus = await api("/api/status");
-        if (operatorStatus.data_loaded) {
-          setPublicDemoMode(false);
+        if (operatorStatus.forecasts?.length) {
+          setPublicDemoMode(false, true);
           render(operatorStatus);
         } else {
           setPublicDemoMode(true, true);
           if (state.opening) setSplashStatus("Loading the synthetic sample forecast…");
-          render(await api("/api/public-demo/status"));
+          render({ ...(await api("/api/public-demo/status")), public_demo: true });
         }
         setConnection(true);
         connected = true;
@@ -508,10 +693,7 @@ async function refreshStatus() {
     setConnection(false);
     if (error.message.includes("access key")) toast(error.message, true);
     if (state.opening) {
-      const savedAddress = localStorage.getItem("busForecastApiUrl");
-      connectionError = savedAddress
-        ? `Could not reach the saved API address (${savedAddress}). Check API access settings, then retry.`
-        : "Could not reach this website’s forecast service. It may be waking up; retry, check your connection, or continue offline.";
+      connectionError = "Could not reach this website’s forecast service after 60 seconds. Retry when your connection is ready.";
     }
   } finally {
     state.checking = false;
@@ -521,14 +703,29 @@ async function refreshStatus() {
   }
   return connected;
 }
+async function waitForServer() {
+  const deadline = Date.now() + 60000;
+  const delays = [1000, 2000, 4000, 8000];
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    try { await api("/health"); return; }
+    catch (_) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      setSplashStatus("Waking up the server (up to 60s)…");
+      await new Promise((resolve) => window.setTimeout(resolve, Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)));
+    }
+  }
+  throw new Error("Server wake-up timed out");
+}
 async function withBusy(label, operation) {
   if (state.busy) return;
   setBusy(true, label);
-  try { const result = await operation(); if (result.message) toast(result.message); const updatedStatus = result.status || (result.public_demo ? result : null); if (updatedStatus) { setPublicDemoMode(Boolean(updatedStatus.public_demo), Boolean(updatedStatus.public_demo ? state.operatorAccess : updatedStatus.data_loaded)); render(updatedStatus); } else await refreshStatus(); }
+  try { const result = await operation(); if (result.message) toast(result.message); const updatedStatus = result.status || (result.public_demo ? result : null); if (updatedStatus) { if (!updatedStatus.public_demo && updatedStatus.data_loaded && !updatedStatus.forecasts?.length) { const demo = await api("/api/public-demo/status"); setPublicDemoMode(true, true); render({ ...demo, public_demo: true }); } else { setPublicDemoMode(Boolean(updatedStatus.public_demo), Boolean(updatedStatus.public_demo ? state.operatorAccess : updatedStatus.data_loaded)); render(updatedStatus); } } else await refreshStatus(); }
   catch (error) {
     const message = error.message || "Something went wrong";
     if (/missing route\/date observations detected/i.test(message)) toast("This route has days without a count. Add the missing daily counts, or choose zero only for a confirmed no-service day.", true);
-    else if (/need at least \d+ continuous calendar days/i.test(message)) toast("There is not enough history to train yet. Keep recording daily counts until this route has at least 118 consecutive days.", true);
+    else if (/need at least \d+ continuous calendar days/i.test(message)) toast(message, true);
     else toast(message, true);
   }
   finally { setBusy(false); }
@@ -539,6 +736,9 @@ async function train(options = {}) {
   return api("/api/train", { method: "POST", body: JSON.stringify({ horizon, folds, missing_days: $("#missingDays").value }) });
 }
 function setup() {
+  // Older versions persisted the operator key. Remove it and retain keys only in page memory.
+  try { localStorage.removeItem("busForecastApiKey"); } catch (_) {}
+  setupMonthlyRouteExplorer();
   const initialView = location.hash.slice(1);
   navigate(PAGE_INFO[initialView] ? initialView : "overview", false);
   $("#mainNav").addEventListener("click", (event) => { const button = event.target.closest("[data-view]"); if (button) navigate(button.dataset.view); });
@@ -559,9 +759,9 @@ function setup() {
     setSplashStatus("Checking the forecast service…");
     refreshStatus();
   });
-  $("#settingsButton").addEventListener("click", () => { $("#apiKey").value = accessKey(); $("#apiUrl").value = localStorage.getItem("busForecastApiUrl") || ""; $("#settingsDialog").showModal(); });
-  $("#saveKey").addEventListener("click", () => { const key = $("#apiKey").value.trim(), rawUrl = $("#apiUrl").value.trim(); if (rawUrl) { try { const parsed = new URL(rawUrl); if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(); localStorage.setItem("busForecastApiUrl", parsed.origin); } catch (_) { toast("Enter a valid API address starting with http:// or https://", true); return; } } else localStorage.removeItem("busForecastApiUrl"); key ? localStorage.setItem("busForecastApiKey", key) : localStorage.removeItem("busForecastApiKey"); $("#settingsDialog").close(); refreshStatus(); });
-  $("#clearKey").addEventListener("click", () => { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); $("#apiKey").value = ""; $("#apiUrl").value = ""; toast("Connection reset on this device"); });
+  $("#settingsButton").addEventListener("click", () => { $("#apiKey").value = accessKey(); $("#settingsDialog").showModal(); });
+  $("#saveKey").addEventListener("click", () => { operatorKeyInMemory = $("#apiKey").value.trim(); try { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); } catch (_) {} $("#settingsDialog").close(); refreshStatus(); });
+  $("#clearKey").addEventListener("click", () => { operatorKeyInMemory = ""; try { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); } catch (_) {} $("#apiKey").value = ""; toast("Operator access cleared for this page"); refreshStatus(); });
   $("#routeRows").addEventListener("change", (event) => {
     const input = event.target.closest(".route-plan-input");
     if (!input || !state.data) return;
@@ -623,7 +823,7 @@ function setup() {
       return result;
     });
   });
-  $("#demoButton").addEventListener("click", () => withBusy("Running demo…", async () => { await api("/api/data/demo", { method: "POST" }); return train({ horizon: 7, folds: 4 }); }));
+  $("#demoButton").addEventListener("click", () => withBusy("Loading synthetic preview…", async () => ({ ...(await api("/api/public-demo/status")), public_demo: true, message: "Read-only synthetic example loaded; your operator data was not changed." })));
   $("#refreshForecast").addEventListener("click", () => withBusy(state.publicDemo ? "Updating example…" : "Refreshing…", () => state.publicDemo
     ? api(`/api/public-demo/status?days=${Number($("#forecastDays").value)}`)
     : api("/api/forecast", { method: "POST", body: JSON.stringify({ days: Number($("#forecastDays").value), missing_days: $("#missingDays").value }) })));
