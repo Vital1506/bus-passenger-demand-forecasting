@@ -18,6 +18,12 @@ import pandas as pd
 
 from .auth import InMemoryRateLimiter
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 logger = logging.getLogger("ai_assistant")
 
 OPENROUTER_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -34,12 +40,39 @@ def get_ai_rate_limiter() -> InMemoryRateLimiter:
 
 def get_openrouter_api_key() -> str:
     """Retrieve the OpenRouter API key from the environment. Never exposed to clients."""
-    return os.getenv("OPENROUTER_API_KEY", "").strip()
+    if "OPENROUTER_API_KEY" in os.environ:
+        return os.environ["OPENROUTER_API_KEY"].strip()
+    for candidate in [Path(".env"), Path(__file__).resolve().parent.parent / ".env"]:
+        if candidate.is_file():
+            try:
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("OPENROUTER_API_KEY=") and not line.startswith("#"):
+                        val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            return val
+            except Exception:
+                pass
+    return ""
 
 
 def get_openrouter_model() -> str:
     """Retrieve the target OpenRouter model or fallback to openrouter/free."""
-    return os.getenv("OPENROUTER_MODEL", "").strip() or DEFAULT_OPENROUTER_MODEL
+    if "OPENROUTER_MODEL" in os.environ:
+        val = os.environ["OPENROUTER_MODEL"].strip()
+        return val or DEFAULT_OPENROUTER_MODEL
+    for candidate in [Path(".env"), Path(__file__).resolve().parent.parent / ".env"]:
+        if candidate.is_file():
+            try:
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("OPENROUTER_MODEL=") and not line.startswith("#"):
+                        val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            return val
+            except Exception:
+                pass
+    return DEFAULT_OPENROUTER_MODEL
 
 
 def get_ai_status() -> dict[str, Any]:
@@ -105,88 +138,110 @@ def extract_system_context(
             logger.warning("Could not read daily ridership data: %s", exc)
 
     # 2. Inspect model metadata & metrics
-    metrics_path = data_dir / "metrics.json"
-    if metrics_path.exists():
-        try:
-            metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
-            context["model_metrics"] = {
-                "model_wape": metrics_data.get("model_wape"),
-                "baseline_wape": metrics_data.get("baseline_wape"),
-                "better_than_baseline": metrics_data.get("better_than_baseline"),
-                "horizon_days": metrics_data.get("horizon"),
-            }
-            context["model_trained"] = True
-            context["training_horizon_days"] = metrics_data.get("horizon")
-        except Exception as exc:
-            logger.warning("Could not parse metrics.json: %s", exc)
+    candidate_metrics = [
+        data_dir / "metrics.json",
+        data_dir / "artifacts" / "metrics.json",
+    ]
+    for metrics_path in candidate_metrics:
+        if metrics_path.exists():
+            try:
+                metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
+                m_wape = metrics_data.get("model_wape")
+                if m_wape is None and isinstance(metrics_data.get("model"), dict):
+                    m_wape = metrics_data["model"].get("wape")
+                b_wape = metrics_data.get("baseline_wape")
+                if b_wape is None and isinstance(metrics_data.get("seasonal_naive"), dict):
+                    b_wape = metrics_data["seasonal_naive"].get("wape")
+                horizon = metrics_data.get("horizon") or metrics_data.get("horizon_days")
+
+                better = metrics_data.get("better_than_baseline")
+                if better is None and m_wape is not None and b_wape is not None:
+                    better = m_wape < b_wape
+
+                context["model_metrics"] = {
+                    "model_wape": round(m_wape * 100, 2) if isinstance(m_wape, (float, int)) and m_wape < 1 else m_wape,
+                    "baseline_wape": round(b_wape * 100, 2) if isinstance(b_wape, (float, int)) and b_wape < 1 else b_wape,
+                    "better_than_baseline": better,
+                    "horizon_days": horizon,
+                }
+                context["model_trained"] = True
+                context["training_horizon_days"] = horizon
+                break
+            except Exception as exc:
+                logger.warning("Could not parse metrics.json: %s", exc)
 
     # 3. Inspect forecast outputs
-    forecast_csv = data_dir / "forecast.csv"
-    if forecast_csv.exists():
-        try:
-            fdf = pd.read_csv(forecast_csv)
-            if "service_date" in fdf.columns and "predicted_passengers" in fdf.columns and "route_id" in fdf.columns:
-                context["forecast_available"] = True
-                fdf["service_date"] = fdf["service_date"].astype(str)
-                dates = sorted(fdf["service_date"].unique().tolist())
-                context["forecast_dates"] = dates
+    candidate_forecasts = [
+        data_dir / "forecast.csv",
+        data_dir / "artifacts" / "forecast.csv",
+    ]
+    for forecast_csv in candidate_forecasts:
+        if forecast_csv.exists():
+            try:
+                fdf = pd.read_csv(forecast_csv)
+                if "service_date" in fdf.columns and "predicted_passengers" in fdf.columns and "route_id" in fdf.columns:
+                    context["forecast_available"] = True
+                    fdf["service_date"] = fdf["service_date"].astype(str)
+                    dates = sorted(fdf["service_date"].unique().tolist())
+                    context["forecast_dates"] = dates
 
-                # Route aggregations over the forecast horizon
-                route_totals = (
-                    fdf.groupby("route_id")["predicted_passengers"]
-                    .mean()
-                    .round(1)
-                    .sort_values(ascending=False)
-                )
-                busiest = [
-                    {"route_id": str(r), "avg_daily_demand": float(v)}
-                    for r, v in route_totals.head(5).items()
-                ]
-                lowest = [
-                    {"route_id": str(r), "avg_daily_demand": float(v)}
-                    for r, v in route_totals.tail(5).items()
-                ]
-                context["busiest_routes_forecast"] = busiest
-                context["lowest_routes_forecast"] = lowest
-
-                # Earliest / tomorrow's forecast
-                if dates:
-                    earliest_date = dates[0]
-                    day_slice = fdf[fdf["service_date"] == earliest_date]
-                    total_pax = float(day_slice["predicted_passengers"].sum().round(1))
-                    top_day_routes = [
-                        {
-                            "route_id": str(row["route_id"]),
-                            "predicted_demand": float(row["predicted_passengers"]),
-                            "lower_90": float(row.get("lower_90_approx", row["predicted_passengers"])),
-                            "upper_90": float(row.get("upper_90_approx", row["predicted_passengers"])),
-                        }
-                        for _, row in day_slice.sort_values(by="predicted_passengers", ascending=False).head(5).iterrows()
+                    # Route aggregations over the forecast horizon
+                    route_totals = (
+                        fdf.groupby("route_id")["predicted_passengers"]
+                        .mean()
+                        .round(1)
+                        .sort_values(ascending=False)
+                    )
+                    busiest = [
+                        {"route_id": str(r), "avg_daily_demand": float(v)}
+                        for r, v in route_totals.head(5).items()
                     ]
-                    context["next_day_forecast"] = {
-                        "date": earliest_date,
-                        "total_system_predicted_demand": total_pax,
-                        "top_routes": top_day_routes,
-                    }
+                    lowest = [
+                        {"route_id": str(r), "avg_daily_demand": float(v)}
+                        for r, v in route_totals.tail(5).items()
+                    ]
+                    context["busiest_routes_forecast"] = busiest
+                    context["lowest_routes_forecast"] = lowest
 
-                # Specific route detail if requested
-                if target_route:
-                    matched = fdf[fdf["route_id"].astype(str) == str(target_route)]
-                    if not matched.empty:
-                        context["route_specific_detail"] = {
-                            "route_id": str(target_route),
-                            "daily_predictions": [
-                                {
-                                    "date": str(row["service_date"]),
-                                    "predicted": float(row["predicted_passengers"]),
-                                    "lower_90": float(row.get("lower_90_approx", row["predicted_passengers"])),
-                                    "upper_90": float(row.get("upper_90_approx", row["predicted_passengers"])),
-                                }
-                                for _, row in matched.iterrows()
-                            ],
+                    # Earliest / tomorrow's forecast
+                    if dates:
+                        earliest_date = dates[0]
+                        day_slice = fdf[fdf["service_date"] == earliest_date]
+                        total_pax = float(day_slice["predicted_passengers"].sum().round(1))
+                        top_day_routes = [
+                            {
+                                "route_id": str(row["route_id"]),
+                                "predicted_demand": float(row["predicted_passengers"]),
+                                "lower_90": float(row.get("lower_90_approx", row["predicted_passengers"])),
+                                "upper_90": float(row.get("upper_90_approx", row["predicted_passengers"])),
+                            }
+                            for _, row in day_slice.sort_values(by="predicted_passengers", ascending=False).head(5).iterrows()
+                        ]
+                        context["next_day_forecast"] = {
+                            "date": earliest_date,
+                            "total_system_predicted_demand": total_pax,
+                            "top_routes": top_day_routes,
                         }
-        except Exception as exc:
-            logger.warning("Could not parse forecast.csv: %s", exc)
+
+                    # Specific route detail if requested
+                    if target_route:
+                        matched = fdf[fdf["route_id"].astype(str) == str(target_route)]
+                        if not matched.empty:
+                            context["route_specific_detail"] = {
+                                "route_id": str(target_route),
+                                "daily_predictions": [
+                                    {
+                                        "date": str(row["service_date"]),
+                                        "predicted": float(row["predicted_passengers"]),
+                                        "lower_90": float(row.get("lower_90_approx", row["predicted_passengers"])),
+                                        "upper_90": float(row.get("upper_90_approx", row["predicted_passengers"])),
+                                    }
+                                    for _, row in matched.iterrows()
+                                ],
+                            }
+                    break
+            except Exception as exc:
+                logger.warning("Could not parse forecast.csv: %s", exc)
 
     return context
 

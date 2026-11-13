@@ -208,18 +208,20 @@ def audit_security():
     gitignore = Path(".gitignore").read_text()
     assert ".env" in gitignore, ".env must be ignored in .gitignore"
     assert "*.db" in gitignore, "*.db must be ignored in .gitignore"
-    
+
     import re
     secret_pattern = re.compile(r"sk-(?:or-v1|proj)-[a-zA-Z0-9]{20,}")
-    for p in Path(".").glob("**/*.py"):
-        if ".venv" in str(p) or "scripts" in str(p):
-            continue
-        text = p.read_text(encoding="utf-8", errors="ignore")
-        match = secret_pattern.search(text)
-        if match:
-            print(f"FAILED: Potential live secret found in {p}")
-            return False
-            
+    for root, dirs, files in os.walk("."):
+        dirs[:] = [d for d in dirs if d not in {".venv", ".git", "__pycache__", "scripts", "node_modules"}]
+        for f in files:
+            if f.endswith(".py") or f.endswith(".js") or f.endswith(".html"):
+                p = Path(root) / f
+                text = p.read_text(encoding="utf-8", errors="ignore")
+                match = secret_pattern.search(text)
+                if match:
+                    print(f"FAILED: Potential live secret found in {p}")
+                    return False
+
     print("PASSED: Security checks, .gitignore exclusion, and credential protection verified.")
     return True
 
