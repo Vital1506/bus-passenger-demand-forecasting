@@ -17,7 +17,7 @@ async function api(path, options = {}) {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
     const payload = type.includes("json") ? await response.json() : await response.text();
-    if (!response.ok) throw new Error(payload?.detail || payload || `Request failed (${response.status})`);
+    if (!response.ok) throw new Error(payload?.message || payload?.detail || payload || `Request failed (${response.status})`);
     return payload;
   } catch (error) {
     if (error?.name === "AbortError") throw new Error("The forecast service took too long to respond. Retry or continue to the dashboard.");
@@ -1368,7 +1368,199 @@ function setup() {
   window.addEventListener("resize", () => { if (state.data) renderChart(state.data.forecasts); });
   window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); state.installPrompt = event; $("#installButton").classList.remove("hidden"); });
   $("#installButton").addEventListener("click", async () => { if (!state.installPrompt) return; state.installPrompt.prompt(); await state.installPrompt.userChoice; state.installPrompt = null; $("#installButton").classList.add("hidden"); });
+function setupAiAssistant() {
+  const toggleBtn = $("#aiChatToggle");
+  const panel = $("#aiChatPanel");
+  const closeBtn = $("#aiCloseChatBtn");
+  const clearBtn = $("#aiClearHistoryBtn");
+  const form = $("#aiChatForm");
+  const input = $("#aiChatInput");
+  const sendBtn = $("#aiSendBtn");
+  const messagesContainer = $("#aiChatMessages");
+  const statusDot = $("#aiStatusDot");
+  const modelBadge = $("#aiModelBadge");
+  const suggestedPrompts = $("#aiSuggestedPrompts");
+
+  if (!toggleBtn || !panel || !form || !input) return;
+
+  const chatHistory = [];
+  let isSubmitting = false;
+
+  async function checkStatus() {
+    try {
+      const res = await api("/api/ai/status");
+      if (res && res.configured) {
+        statusDot.classList.add("active");
+        statusDot.title = `AI Assistant ready (${res.model})`;
+        modelBadge.textContent = res.model || "OpenRouter";
+      } else {
+        statusDot.classList.remove("active");
+        statusDot.title = "OpenRouter API Key not configured";
+        modelBadge.textContent = "Key Required";
+      }
+    } catch (_) {
+      statusDot.classList.remove("active");
+      modelBadge.textContent = "Offline";
+    }
+  }
+
+  function scrollToBottom() {
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+
+  function formatInline(str) {
+    return str
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+  }
+
+  function renderFormattedText(text) {
+    const escaped = String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    const paragraphs = escaped.split(/\n\n+/);
+    return paragraphs.map((p) => {
+      const lines = p.split(/\n/);
+      if (lines.length > 1 && lines.every((l) => l.trim().startsWith("- ") || l.trim().startsWith("* "))) {
+        const lis = lines.map((l) => `<li>${formatInline(l.trim().replace(/^[-*]\s+/, ""))}</li>`).join("");
+        return `<ul>${lis}</ul>`;
+      }
+      return `<p>${lines.map(formatInline).join("<br>")}</p>`;
+    }).join("");
+  }
+
+  function appendMessage(role, content, isError = false) {
+    const msgEl = document.createElement("div");
+    msgEl.className = `ai-message ${role === "user" ? "ai-user-message" : "ai-bot-message"}`;
+
+    const avatar = document.createElement("div");
+    avatar.className = "ai-message-avatar";
+    avatar.textContent = role === "user" ? "YOU" : "AI";
+
+    const contentEl = document.createElement("div");
+    contentEl.className = `ai-message-content${isError ? " ai-message-error" : ""}`;
+    contentEl.innerHTML = renderFormattedText(content);
+
+    msgEl.appendChild(avatar);
+    msgEl.appendChild(contentEl);
+    messagesContainer.appendChild(msgEl);
+    scrollToBottom();
+  }
+
+  function showTypingIndicator() {
+    const ind = document.createElement("div");
+    ind.id = "aiTypingIndicator";
+    ind.className = "ai-message ai-bot-message";
+    ind.innerHTML = `
+      <div class="ai-message-avatar">AI</div>
+      <div class="ai-message-content" style="padding: 6px 12px;">
+        <div class="ai-typing-indicator"><span></span><span></span><span></span></div>
+      </div>
+    `;
+    messagesContainer.appendChild(ind);
+    scrollToBottom();
+  }
+
+  function hideTypingIndicator() {
+    const el = document.getElementById("aiTypingIndicator");
+    if (el) el.remove();
+  }
+
+  toggleBtn.addEventListener("click", () => {
+    panel.classList.toggle("hidden");
+    if (!panel.classList.contains("hidden")) {
+      input.focus();
+      checkStatus();
+    }
+  });
+
+  closeBtn.addEventListener("click", () => {
+    panel.classList.add("hidden");
+  });
+
+  clearBtn.addEventListener("click", () => {
+    chatHistory.length = 0;
+    messagesContainer.innerHTML = `
+      <div class="ai-message ai-bot-message">
+        <div class="ai-message-avatar">AI</div>
+        <div class="ai-message-content">
+          <p><strong>Conversation cleared.</strong></p>
+          <p>How can I help you analyze bus demand or transit operations?</p>
+        </div>
+      </div>
+    `;
+    scrollToBottom();
+  });
+
+  suggestedPrompts.querySelectorAll(".ai-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const prompt = chip.getAttribute("data-prompt");
+      if (prompt && !isSubmitting) {
+        input.value = prompt;
+        sendMessage();
+      }
+    });
+  });
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    if (!text || isSubmitting) return;
+
+    appendMessage("user", text);
+    input.value = "";
+    isSubmitting = true;
+    sendBtn.disabled = true;
+    showTypingIndicator();
+
+    try {
+      const payload = {
+        message: text,
+        history: chatHistory.slice(-6),
+      };
+      const routeSelect = $("#forecastRoute");
+      if (routeSelect && routeSelect.value && routeSelect.value !== "all") {
+        payload.route_id = routeSelect.value;
+      }
+
+      const res = await api("/api/ai/chat", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      hideTypingIndicator();
+
+      if (res && res.status === "ok" && res.reply) {
+        appendMessage("assistant", res.reply);
+        chatHistory.push({ role: "user", content: text });
+        chatHistory.push({ role: "assistant", content: res.reply });
+      } else {
+        const errMsg = res?.message || "Received an unexpected response format.";
+        appendMessage("assistant", `⚠️ ${errMsg}`, true);
+      }
+    } catch (err) {
+      hideTypingIndicator();
+      const msg = err.message || "Failed to communicate with the AI assistant.";
+      appendMessage("assistant", `⚠️ ${msg}`, true);
+    } finally {
+      isSubmitting = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    sendMessage();
+  });
+
+  checkStatus();
+}
+
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  setupAiAssistant();
   refreshStatus();
   window.setInterval(() => { if (document.visibilityState === "visible") refreshStatus(); }, 60000);
 }

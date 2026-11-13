@@ -74,3 +74,14 @@ test("service planner and occupancy pages declare required interactive elements"
   assert.match(html, /id="loadTripOccButton"/);
   assert.match(html, /id="occStopsTableBody"/);
 });
+
+test("ai assistant declares accessible toggle, chat panel, and interactive controls", () => {
+  assert.match(html, /id="aiChatToggle"/);
+  assert.match(html, /id="aiChatPanel"/);
+  assert.match(html, /id="aiChatMessages"/);
+  assert.match(html, /id="aiChatInput"/);
+  assert.match(html, /id="aiSendBtn"/);
+  assert.match(html, /id="aiSuggestedPrompts"/);
+  assert.match(app, /\/api\/ai\/chat/);
+  assert.match(app, /\/api\/ai\/status/);
+});

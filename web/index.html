@@ -419,6 +419,56 @@ Content-Type: application/json
       <footer data-pages="overview forecasts routes network operations planner occupancy data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
+    <!-- AI Transit Intelligence Assistant Floating Interface -->
+    <div id="aiChatPanel" class="ai-chat-panel hidden" role="region" aria-label="AI Transit Intelligence Assistant">
+      <div class="ai-chat-header">
+        <div class="ai-chat-header-title">
+          <span class="ai-header-badge">AI COPILOT</span>
+          <h3>Transit Intelligence AI</h3>
+          <span id="aiModelBadge" class="ai-model-badge">OpenRouter</span>
+        </div>
+        <div class="ai-chat-header-actions">
+          <button id="aiClearHistoryBtn" class="ai-icon-btn" type="button" title="Clear conversation" aria-label="Clear conversation">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+          <button id="aiCloseChatBtn" class="ai-icon-btn" type="button" title="Close AI Assistant" aria-label="Close chat">✕</button>
+        </div>
+      </div>
+      <div id="aiChatMessages" class="ai-chat-messages" role="log" aria-live="polite">
+        <div class="ai-message ai-bot-message">
+          <div class="ai-message-avatar">AI</div>
+          <div class="ai-message-content">
+            <p><strong>Welcome to Transit Intelligence AI.</strong></p>
+            <p>I analyze real bus passenger demand, machine learning forecasts, route crowding, and dispatch recommendations. How can I assist with your transit operations today?</p>
+          </div>
+        </div>
+      </div>
+      <div class="ai-suggested-prompts" id="aiSuggestedPrompts">
+        <button class="ai-chip" type="button" data-prompt="What is the predicted passenger demand for tomorrow?">Tomorrow's demand?</button>
+        <button class="ai-chip" type="button" data-prompt="Which bus route has the highest passenger demand?">Busiest routes?</button>
+        <button class="ai-chip" type="button" data-prompt="Which routes require additional buses or have crowding risks?">Crowding risk?</button>
+        <button class="ai-chip" type="button" data-prompt="Explain the current forecasting results and model accuracy.">Explain model?</button>
+      </div>
+      <form id="aiChatForm" class="ai-chat-input-bar">
+        <input id="aiChatInput" type="text" placeholder="Ask about routes, demand forecasts, crowding..." autocomplete="off" maxlength="500" />
+        <button id="aiSendBtn" type="submit" class="ai-send-button" aria-label="Send message">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </form>
+    </div>
+
+    <button id="aiChatToggle" class="ai-fab-button" type="button" aria-label="Open AI Transit Assistant" title="Open AI Transit Assistant">
+      <span class="ai-fab-icon">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a8 8 0 0 0-8 8c0 3.3 2 6.1 5 7.3V20a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2.7c3-1.2 5-4 5-7.3a8 8 0 0 0-8-8z"/>
+          <path d="M9 10h.01M15 10h.01"/>
+          <path d="M9.5 14a3.5 3.5 0 0 0 5 0"/>
+        </svg>
+      </span>
+      <span class="ai-fab-label">AI Assistant</span>
+      <span id="aiStatusDot" class="ai-status-dot" title="AI Status"></span>
+    </button>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <dialog id="settingsDialog" class="settings-dialog"><form method="dialog"><div class="dialog-head"><div><p class="eyebrow">OPERATOR ACCESS</p><h2>Company data access</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div><p>The public synthetic demo works without setup. Operators can enter the access key supplied by their administrator. The key is held in memory for this page only and is never saved in browser storage.</p><label for="apiKey" class="key-label">Operator bearer key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Optional · supplied by your administrator" /><div class="dialog-actions"><button id="clearKey" class="button button-quiet" type="button">Clear operator key</button><button id="saveKey" class="button button-primary" value="default">Use key for this page <span>→</span></button></div></form></dialog>
     <script type="module" src="/static/app.js"></script>

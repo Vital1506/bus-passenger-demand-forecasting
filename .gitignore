@@ -13,3 +13,6 @@ build/
 *.sqlite3
 data/backups/
 data/transit_intelligence.db
+.env
+.env.*
+!.env.example

@@ -305,5 +305,48 @@ The unit checks cover fail-closed missing-date handling, explicit zero filling, 
 6. Run in shadow mode and save each forecast, input cutoff, model version, actual outcome, and error. Agree thresholds, fallback behavior, ownership, and retraining cadence with operations.
 7. Add service schedules, holidays, weather forecasts, school calendars, events, and disruptions as versioned, forecast-time-available features. Evaluate capacity planning needs separately from average demand forecasting.
 
+## OpenRouter AI Transit Intelligence Assistant
+
+The platform integrates OpenRouter AI to provide conversational transit operations intelligence grounded directly in actual machine learning forecasts and transit network telemetry.
+
+### Key Capabilities
+- **Demand Explanations:** Ask about tomorrow's predicted demand across the system or for specific routes.
+- **Route Rankings:** Identify the busiest and lowest-demand routes based on ML predictions.
+- **Operational & Crowding Alerts:** Discover trips at risk of overcapacity or bunching, with recommendations for additional bus dispatch or headway adjustments.
+- **Strict Grounding:** The assistant strictly uses verified local artifacts (`forecast.csv`, `metrics.json`, `daily_ridership.csv`). It never hallucinates numbers or fabricates model accuracy metrics.
+- **Graceful Unconfigured Fallback:** If an API key is not configured, the assistant provides clear guidance without throwing unhandled errors or crashing.
+
+### Environment Configuration
+
+Configure the following environment variables in your `.env` file (local) or Render Dashboard:
+
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_MODEL=openrouter/free
+```
+
+- `OPENROUTER_API_KEY`: Your secret OpenRouter API key. Kept strictly on the backend; never exposed to browser clients or network responses.
+- `OPENROUTER_MODEL`: OpenRouter model identifier (default: `openrouter/free`).
+
+### API Endpoints
+
+- `GET /api/ai/status`
+  - Returns whether OpenRouter AI is configured, the active model name, and provider information.
+- `POST /api/ai/chat`
+  - Body: `{"message": "What is the predicted passenger demand for tomorrow?", "history": [], "route_id": "optional"}`
+  - Returns: `{"status": "ok", "reply": "...", "model": "openrouter/free", "context_summary": {...}}`
+  - Protected by sliding-window rate limiting (30 requests/minute) and existing authentication architecture.
+
+### UI Features
+- **Floating AI Assistant (FAB):** Bottom-right action button with live connection status indicator.
+- **Expandable Chat Panel:** Desktop drawer and mobile-responsive bottom sheet.
+- **Suggested Question Chips:** Instant 1-click queries for demand forecasts, crowding risks, and model explanations.
+- **Conversation Management:** Session chat history and quick clear conversation action.
+
+### Troubleshooting
+- **503 / "API key is not configured":** Add `OPENROUTER_API_KEY` to your environment variables or Render service settings.
+- **401 / "Invalid API key":** Verify that your OpenRouter key is active and correctly pasted without whitespace.
+- **429 / "Rate limit exceeded":** The OpenRouter free tier or local client rate limiter was reached; wait a moment before retrying.
+
 This repository includes a generic authenticated daily-count ingestion endpoint and a prototype route-planning review signal. It does not include a vendor-specific connector, scheduler, live telemetry adapter, service-calendar logic, monitoring service, capacity optimizer, durable audit archive, SSO/roles, or privacy/security review. Those depend on company systems and requirements. No company data was provided; do not treat sample metrics as evidence of real-world performance.
 

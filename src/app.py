@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1457,6 +1457,62 @@ def poll_realtime_provider(agency_id: str = "CTA") -> dict[str, Any]:
     """Trigger manual polling of a registered external GTFS-RT feed provider."""
     registry = get_provider_registry()
     return registry.poll_provider(agency_id)
+
+
+# ==========================================
+# OpenRouter AI Transit Intelligence Assistant
+# ==========================================
+
+class AIChatRequest(BaseModel):
+    message: str
+    history: list[dict[str, str]] | None = None
+    route_id: str | None = None
+
+
+@app.get("/api/ai/status")
+def ai_status() -> dict[str, Any]:
+    """Get the current configuration status of the AI Assistant."""
+    from .ai_assistant import get_ai_status
+
+    return get_ai_status()
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(
+    payload: AIChatRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Any:
+    """Conversational AI assistant grounded in real transit demand telemetry."""
+    # Check authorization if hosted deployment requires authentication
+    authorize(authorization)
+
+    from .ai_assistant import process_chat_message
+
+    client_id = request.client.host if request and request.client else "unknown"
+    result = await process_chat_message(
+        user_message=payload.message,
+        history=payload.history,
+        route_id=payload.route_id,
+        client_id=client_id,
+        data_dir=DATA_DIR,
+    )
+
+    if result.get("status") == "error":
+        status_code_map = {
+            "API_KEY_MISSING": 503,
+            "INVALID_API_KEY": 401,
+            "CLIENT_RATE_LIMIT": 429,
+            "RATE_LIMIT_EXCEEDED": 429,
+            "TIMEOUT": 504,
+            "EMPTY_MESSAGE": 422,
+            "MODEL_UNAVAILABLE": 502,
+            "NETWORK_ERROR": 502,
+        }
+        code = status_code_map.get(result.get("error_code"), 500)
+        return JSONResponse(status_code=code, content=result)
+
+    return result
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)

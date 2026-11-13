@@ -14,3 +14,7 @@ services:
         generateValue: true
       - key: BUS_FORECAST_DATA_DIR
         value: /tmp/bus-forecast
+      - key: OPENROUTER_MODEL
+        value: openrouter/free
+      - key: OPENROUTER_API_KEY
+        sync: false
