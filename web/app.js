@@ -2,9 +2,48 @@ import { canonicalRoute, matchDestinations, normalizePlaceLabel, placeSuggestion
 import { buildMonthlySeries, chartModel, describeError, escapeHtml, formatNumber, missingMonthRanges, monthLabel, normalizeHistoryPayload, normalizeRoutesPayload, searchRoutes, summarizeRoute } from "./monthly_explorer.mjs";
 
 const $ = (selector) => document.querySelector(selector);
-const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null, monthly: { loaded: false, loading: false, routes: [], selected: "", history: new Map(), query: "" } };
+const state = { data: null, installPrompt: null, busy: false, checking: false, toastTimer: null, publicDemo: false, lastCheckedAt: null, view: "overview", opening: true, openingStartedAt: Date.now(), openingTimer: null, openingMessageTimer: null, routeCatalog: null, monitoring: null, identity: null, permissions: null, monthly: { loaded: false, loading: false, routes: [], selected: "", history: new Map(), query: "" } };
 
 function accessKey() { return localStorage.getItem("busForecastApiKey") || ""; }
+const ROLE_LABELS = { admin: "Administrator", operator: "Transport operator", analyst: "Read-only analyst" };
+function roleLabel(role) { return ROLE_LABELS[role] || role || "Unknown role"; }
+function permissionAllowed(node) {
+  const needed = node?.dataset?.permission;
+  if (!needed || !state.permissions) return true;
+  return needed.split(/\s+/).every((permission) => state.permissions.has(permission));
+}
+function applyPermissions() {
+  document.querySelectorAll("[data-permission]").forEach((node) => {
+    const allowed = permissionAllowed(node);
+    node.disabled = !allowed;
+    node.classList.toggle("permission-blocked", !allowed);
+    if (!allowed) node.title = "Your role does not include this action";
+  });
+}
+async function loadIdentity(force = false) {
+  if (state.identity && !force) return state.identity;
+  try {
+    const payload = await api("/api/security/me");
+    const principal = payload?.principal;
+    state.identity = payload;
+    state.permissions = new Set(principal?.permissions || []);
+    const badge = $("#identity");
+    if (badge && principal) {
+      const agency = payload.workspace_agency || principal.agency;
+      badge.textContent = `${principal.name} · ${roleLabel(principal.role)} · ${agency}`;
+      badge.title = `Signed in as ${principal.name} (${roleLabel(principal.role)}) for agency ${agency}. Role permissions: ${(principal.permissions || []).join(", ")}. Requests are limited to ${payload.rate_limit_per_minute} per minute.`;
+      badge.dataset.role = principal.role;
+      badge.classList.remove("hidden");
+    }
+  } catch (error) {
+    state.identity = null;
+    state.permissions = null;
+    const badge = $("#identity");
+    if (badge) { badge.classList.add("hidden"); badge.textContent = ""; }
+  }
+  applyPermissions();
+  return state.identity;
+}
 function apiBase() { return (localStorage.getItem("busForecastApiUrl") || window.location.origin).replace(/\/+$/, ""); }
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -16,7 +55,12 @@ async function api(path, options = {}) {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
     const payload = type.includes("json") ? await response.json() : await response.text();
-    if (!response.ok) throw new Error(payload?.detail || payload || `Request failed (${response.status})`);
+    if (!response.ok) {
+      const detail = Array.isArray(payload?.detail)
+        ? payload.detail.map((item) => item?.msg || "").filter(Boolean).join("; ")
+        : payload?.detail;
+      throw new Error(detail || payload || `Request failed (${response.status})`);
+    }
     return payload;
   } catch (error) {
     if (error?.name === "AbortError") throw new Error("The forecast service took too long to respond. Retry or continue to the dashboard.");
@@ -48,7 +92,7 @@ function toast(message, error = false) {
 }
 function setBusy(busy, label = "Working…") {
   state.busy = busy;
-  [$("#csvFile"), $("#trainButton"), $("#demoButton"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = busy || (state.publicDemo && !state.operatorAccess); });
+  [$("#csvFile"), $("#trainButton"), $("#demoButton"), $("#saveCountButton")].forEach((node) => { if (node) node.disabled = busy || !permissionAllowed(node) || (state.publicDemo && !state.operatorAccess); });
   $("#refreshForecast").disabled = busy;
   $("#forecastDays").disabled = busy;
   $("#forecastRoute").disabled = busy;
@@ -92,6 +136,23 @@ function syncForecastRoutes(rows) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   select.replaceChildren(new Option("All routes", "all"), ...routes.map((route) => new Option(route, route)));
   select.value = routes.includes(previous) ? previous : "all";
+}
+function renderForecastViewStatus() {
+  const note = $("#forecastViewStatus");
+  const chip = $("#forecastSourceLabel");
+  if (!note) return;
+  const data = state.data;
+  const loaded = Boolean(data && data.data_loaded);
+  const source = String(data?.source || "");
+  const type = !loaded ? "unavailable" : /synthetic/i.test(source) ? "synthetic" : "forecast";
+  note.textContent = !loaded
+    ? "No data is loaded yet. Record a daily count on Overview, upload a CSV under Data Sources, or load the synthetic demo, then refresh the forecast."
+    : `${source || "Unknown source"} · ${Number(data.route_count || 0).toLocaleString()} routes · ${Number(data.rows || 0).toLocaleString()} route-day records · horizon ${data.horizon_days || "—"} days · ${data.forecast_updated_at ? `forecast updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "no forecast generated yet"}.`;
+  if (chip) {
+    chip.className = `data-label data-label-${type}`;
+    chip.dataset.labelType = type;
+    chip.textContent = type === "synthetic" ? "SYNTHETIC DEMO" : type === "forecast" ? "FORECAST" : "UNAVAILABLE";
+  }
 }
 function renderChart(rows) {
   const svg = $("#forecastChart");
@@ -143,6 +204,7 @@ function render(data) {
   const source = ({ "synthetic demo data": "Synthetic sample data", "synthetic schedule demo data": "Synthetic timetable scenario", "company upload": "Operator data uploaded", "company feed": "Daily counts entered or imported" })[data.source] || "Waiting for data";
   $("#sourceLabel").textContent = source;
   $("#updatedLabel").textContent = data.forecast_updated_at ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(data.forecast_updated_at))}` : "No forecast yet";
+  renderForecastViewStatus();
   $("#workflowNote").textContent = state.publicDemo ? (state.operatorAccess ? "Synthetic preview shown because no operator data is loaded yet. Upload daily counts, or a timetable to create a labelled synthetic scenario." : "This public preview is read-only. An authorized operator key is required to upload data or train a model.") : data.source === "synthetic schedule demo data" ? "This timetable-based scenario is synthetic, not observed passenger demand. Replace it with actual passenger counts before operational use." : data.source === "synthetic demo data" ? "Demo numbers are synthetic. Replace them with approved company data before operational use." : "Forecasts refresh when daily counts arrive. Upload only data approved for this environment.";
   syncForecastRoutes(data.forecasts);
   renderChart(data.forecasts);
@@ -151,12 +213,20 @@ function render(data) {
 }
 
 const PAGE_INFO = {
-  overview: ["Start here", "Choose the example or record a daily passenger count."],
-  forecasts: ["Forecasts", "Explore the demand outlook and download route-level estimates."],
-  routes: ["Routes", "Compare forecast totals and validation scores by route."],
-  data: ["My data", "See which passenger counts are saved and when they were updated."],
+  overview: ["Overview", "A quick read on service demand and forecast freshness."],
+  live: ["Live Operations", "A rolling view of the latest observed counts and the forecast."],
+  forecasts: ["Demand Forecasts", "Explore the demand outlook and download route-level estimates."],
+  routes: ["Route Network", "Compare forecast totals and validation scores by route."],
+  analytics: ["Passenger Analytics", "Monthly observed boardings by route."],
+  occupancy: ["Occupancy & Capacity", "Projected occupancy and capacity utilisation."],
+  alerts: ["Smart Alerts", "Operator alerts for demand, data-quality, and model checks."],
+  planner: ["Service Planner", "Route totals, review counts, and an exportable plan."],
+  data: ["Data Sources", "See which passenger counts are saved and when they were updated."],
   model: ["How it works", "A plain-language guide to the data and forecast."],
-  explorer: ["Smart Route Explorer", "Search Chicago CTA bus routes and review their observed monthly boardings."]
+  monitoring: ["Model Monitoring", "Model version, accuracy, freshness, and data-quality checks."],
+  notifications: ["Alerts & reports", "Operator notifications, delivery channels, and downloadable reports."],
+  explorer: ["Historical Explorer", "Search Chicago CTA bus routes and review their observed monthly boardings."],
+  settings: ["Settings", "API connection, key, and the signed-in agent."]
 };
 function setSplashStatus(message) { const label = $("#splashLoading"); if (label) label.textContent = message; }
 function renderPlaceSuggestions(input, list, values, preferred = []) {
@@ -327,8 +397,13 @@ function navigate(view, updateHash = true) {
   $("#pageTitle").textContent = PAGE_INFO[view][0];
   $("#pageSummary").textContent = PAGE_INFO[view][1];
   if (updateHash && location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
-  if (view === "forecasts" && state.data) renderChart(state.data.forecasts);
+  if (view === "forecasts") {
+    if (state.data) { syncForecastRoutes(state.data.forecasts); renderChart(state.data.forecasts); renderTable(state.data.forecasts); }
+    renderForecastViewStatus();
+  }
   if (view === "explorer") void loadMonthlyDataset();
+  if (view === "monitoring") void loadMonitoring();
+  if (view === "notifications") void loadNotificationsPage();
 }
 function readRoutePlans() {
   try {
@@ -424,6 +499,328 @@ function renderModel(data) {
     const winner = Number.isFinite(mwape) && Number.isFinite(bwape) ? (mwape <= bwape ? "Model" : "Seasonal baseline") : "Not evaluated";
     return `<tr><td><span class="route-pill">${escapeText(route)}</span></td><td class="numeric">${percent(score.model?.wape)}</td><td class="numeric">${percent(score.seasonal_naive?.wape)}</td><td>${winner}</td></tr>`;
   }).join("") : '<tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr>';
+}
+const MONITORING_VERDICTS = { model_leads: "Model leads", baseline_leads: "Baseline leads", not_evaluated: "Not evaluated" };
+const MONITORING_RECOMMENDATIONS = { hold: "Hold the current model", retrain_candidate: "Review retraining", insufficient_information: "Insufficient information" };
+const MONITORING_CHECK_LABELS = { pass: "Pass", fail: "Fail", warning: "Review", unknown: "Unknown" };
+const MONITORING_POLICY_FIELDS = {
+  max_model_age_days: ["#monPolicyModelAge", "Maximum model age"],
+  max_data_age_days: ["#monPolicyDataAge", "Maximum data age"],
+  max_missing_percent: ["#monPolicyMissing", "Maximum missing data"],
+  max_wape_gap: ["#monPolicyWapeGap", "Allowed WAPE gap"],
+  max_holdout_degradation: ["#monPolicyHoldout", "Maximum holdout degradation"],
+  distribution_shift_percent: ["#monPolicyShift", "Distribution shift threshold"],
+  min_observations_per_route: ["#monPolicyCoverage", "Minimum observations per route"],
+};
+function formatStamp(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isFinite(date.valueOf()) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date) : "—";
+}
+function formatScore(value, digits = 1) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
+}
+function formatDays(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toLocaleString(undefined, { maximumFractionDigits: 1 })} day${Math.abs(number) === 1 ? "" : "s"}` : "—";
+}
+function renderMonitoring(payload) {
+  state.monitoring = payload;
+  const model = payload?.model || {}, data = payload?.data || {}, forecast = payload?.forecast || {};
+  const metrics = payload?.metrics || {}, comparison = payload?.baseline_comparison || {};
+  const distribution = payload?.distribution || {}, retraining = payload?.retraining || {}, coverage = payload?.training_coverage || {};
+  const scores = metrics.holdout?.available ? metrics.holdout.model : metrics.selection?.model;
+  const baselineScores = metrics.holdout?.available ? metrics.holdout.baseline : metrics.selection?.baseline;
+  $("#monModelVersion").textContent = model.version || "Not trained";
+  $("#monTrainedAt").textContent = formatStamp(model.trained_at);
+  $("#monTrainedThrough").textContent = model.trained_through ? prettyDate(String(model.trained_through).slice(0, 10)) : "—";
+  $("#monHorizon").textContent = model.horizon_days ? `${model.horizon_days} days` : "—";
+  $("#monRoutes").textContent = model.route_count ? Number(model.route_count).toLocaleString() : "—";
+  const minObservations = Number(coverage.min_observations_per_route);
+  $("#monCoverage").textContent = coverage.span_days
+    ? `${Number(coverage.route_count).toLocaleString()} routes · ${Number(coverage.span_days).toLocaleString()} days${Number.isFinite(minObservations) ? ` · min ${minObservations.toLocaleString()} obs/route` : ""}`
+    : "No training data";
+  $("#monLastObserved").textContent = data.last_observed_date ? prettyDate(data.last_observed_date) : "—";
+  $("#monLastForecast").textContent = forecast.updated_at ? formatStamp(forecast.updated_at) : "No forecast";
+  $("#monMae").textContent = formatScore(scores?.mae);
+  $("#monRmse").textContent = formatScore(scores?.rmse);
+  $("#monWape").textContent = percent(scores?.wape);
+  $("#monBaselineWape").textContent = percent(baselineScores?.wape);
+  $("#monVerdict").textContent = MONITORING_VERDICTS[comparison.verdict] || "Not evaluated";
+  $("#monMissing").textContent = data.missing_percent === null || data.missing_percent === undefined
+    ? "No data"
+    : `${formatScore(data.missing_percent, 2)}% · ${formatScore(data.missing_route_days, 0)} route-days`;
+  $("#monModelAge").textContent = formatDays(model.age_days);
+  $("#monDataAge").textContent = formatDays(data.age_days);
+  $("#monForecastAge").textContent = `Forecast ${formatDays(forecast.age_days)}`;
+
+  const warnings = Array.isArray(payload?.warnings) ? payload.warnings : [];
+  $("#monWarnings").innerHTML = warnings.length ? warnings.map((warning) => `<li class="monitoring-warning severity-${escapeText(warning.severity)}"><div><strong>${escapeText(warning.title)}</strong><span>${escapeText(warning.detail)}</span></div><em>${escapeText(warning.suggested_action)}</em></li>`).join("") : '<li class="monitoring-empty">No warnings: every configured check is within its threshold.</li>';
+
+  const routeRows = Array.isArray(metrics.by_route) ? metrics.by_route : [];
+  $("#monRouteRows").innerHTML = routeRows.length ? routeRows.map((row) => {
+    const better = row.model_better === true ? "Model" : row.model_better === false ? "Seasonal baseline" : "Not evaluated";
+    return `<tr><td><span class="route-pill">${escapeText(row.route)}</span></td><td class="numeric">${formatScore(row.model?.mae)}</td><td class="numeric">${formatScore(row.model?.rmse)}</td><td class="numeric">${percent(row.model?.wape)}</td><td class="numeric">${percent(row.baseline?.wape)}</td><td>${better}</td></tr>`;
+  }).join("") : '<tr class="empty-row"><td colspan="6">Route error appears after training.</td></tr>';
+
+  const horizonRows = Array.isArray(metrics.by_horizon) ? metrics.by_horizon : [];
+  $("#monHorizonRows").innerHTML = horizonRows.length ? horizonRows.map((row) => `<tr><td>Day ${escapeText(row.horizon_days)}</td><td class="numeric">${formatScore(row.mae)}</td><td class="numeric">${formatScore(row.rmse)}</td><td class="numeric">${percent(row.wape)}</td></tr>`).join("") : '<tr class="empty-row"><td colspan="4">Horizon error appears after training.</td></tr>';
+
+  const distributionRows = Array.isArray(distribution.routes) ? distribution.routes : [];
+  const overall = distribution.overall;
+  const distributionMarkup = distributionRows.map((row) => {
+    const change = Number(row.change_percent);
+    const signal = row.flagged ? '<span class="planning-signal signal-alert">Changed</span>' : '<span class="planning-signal signal-ok">Stable</span>';
+    return `<tr><td><span class="route-pill">${escapeText(row.route)}</span></td><td class="numeric">${formatScore(row.prior_mean)}</td><td class="numeric">${formatScore(row.recent_mean)}</td><td class="numeric">${Number.isFinite(change) ? `${change > 0 ? "+" : ""}${formatScore(change)}%` : "—"}</td><td>${signal}</td></tr>`;
+  });
+  if (overall) {
+    distributionMarkup.unshift(`<tr><td><strong>All routes</strong></td><td class="numeric">${formatScore(overall.prior_mean)}</td><td class="numeric">${formatScore(overall.recent_mean)}</td><td class="numeric">${Number.isFinite(Number(overall.change_percent)) ? `${Number(overall.change_percent) > 0 ? "+" : ""}${formatScore(overall.change_percent)}%` : "—"}</td><td><span class="planning-signal ${overall.flagged ? "signal-alert" : "signal-ok"}">${overall.flagged ? "Changed" : "Stable"}</span></td></tr>`);
+  }
+  $("#monDistributionRows").innerHTML = distributionMarkup.length ? distributionMarkup.join("") : '<tr class="empty-row"><td colspan="5">Distribution checks appear when enough observations exist.</td></tr>';
+
+  $("#monRetrainingVerdict").textContent = MONITORING_RECOMMENDATIONS[retraining.recommendation] || "—";
+  $("#monRetrainingSummary").textContent = retraining.summary || "No retraining recommendation is available yet.";
+  const checks = Array.isArray(retraining.required_checks) ? retraining.required_checks : [];
+  $("#monRetrainingChecks").innerHTML = checks.length ? checks.map((check) => {
+    const status = MONITORING_CHECK_LABELS[check.status] || "Unknown";
+    const css = check.status === "pass" ? "signal-ok" : check.status === "fail" ? "signal-alert" : "signal-near";
+    return `<li class="monitoring-check"><div><strong>${escapeText(check.label)}</strong><span>${escapeText(check.detail)}</span></div><span class="planning-signal ${css}">${status}</span></li>`;
+  }).join("") : '<li class="monitoring-empty">No checks are available yet.</li>';
+
+  const policy = retraining.policy || {};
+  for (const [key, [selector]] of Object.entries(MONITORING_POLICY_FIELDS)) {
+    const input = $(selector);
+    if (input && document.activeElement !== input && policy[key] !== undefined) input.value = String(policy[key]);
+  }
+}
+async function loadMonitoring() {
+  const note = $("#monStatusNote");
+  if (!note) return;
+  note.textContent = "Loading model monitoring…";
+  try {
+    const payload = await api("/api/monitoring");
+    renderMonitoring(payload);
+    note.textContent = payload.generated_at ? `Snapshot generated ${formatStamp(payload.generated_at)}. Read-only: no model was retrained.` : "Monitoring loaded.";
+  } catch (error) {
+    note.textContent = /access key/i.test(error.message)
+      ? "Model monitoring needs an operator access key. Add it in Settings to read model health; the public demo does not expose it."
+      : `Monitoring unavailable: ${error.message}`;
+  }
+}
+async function saveMonitoringPolicy() {
+  const status = $("#monPolicyStatus");
+  const payload = {};
+  for (const [key, [selector, label]] of Object.entries(MONITORING_POLICY_FIELDS)) {
+    const raw = ($(selector)?.value || "").trim();
+    if (raw === "") continue;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) { status.textContent = `${label} must be a number.`; return; }
+    payload[key] = value;
+  }
+  status.textContent = "Saving thresholds…";
+  try {
+    const result = await api("/api/monitoring/policy", { method: "PUT", body: JSON.stringify(payload) });
+    if (result?.monitoring) renderMonitoring(result.monitoring);
+    status.textContent = "Thresholds saved. No model was retrained.";
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message, true);
+  }
+}
+const NOTIF_SEVERITY_LABELS = { critical: "Critical", warning: "Warning", info: "Info" };
+function fillNotificationPolicy(policy = {}) {
+  const inApp = policy.in_app || {}, email = policy.email || {}, webhook = policy.webhook || {}, thresholds = policy.thresholds || {};
+  const setValue = (selector, value) => { const node = $(selector); if (node && value !== undefined && value !== null) node.value = String(value); };
+  setValue("#notifInAppEnabled", inApp.enabled ?? true);
+  setValue("#notifEmailEnabled", email.enabled ?? false);
+  setValue("#notifEmailProvider", email.provider || "smtp");
+  setValue("#notifEmailHost", email.host || "");
+  setValue("#notifEmailPort", email.port || 587);
+  setValue("#notifEmailTls", email.use_tls ?? true);
+  setValue("#notifEmailUser", email.username || "");
+  setValue("#notifEmailUrl", email.url || "");
+  setValue("#notifEmailSender", email.sender || "");
+  setValue("#notifEmailRecipients", (email.recipients || []).join(", "));
+  setValue("#notifWebhookEnabled", webhook.enabled ?? false);
+  setValue("#notifWebhookUrl", webhook.url || "");
+  setValue("#notifMinSeverity", thresholds.min_severity || "warning");
+  setValue("#notifMinPassengers", thresholds.min_predicted_passengers ?? 0);
+  setValue("#notifCapacityUtil", thresholds.capacity_utilization_percent ?? 90);
+  setValue("#notifMaxError", thresholds.max_forecast_error_percent ?? 25);
+  setValue("#notifDemandChange", thresholds.demand_change_percent ?? 30);
+  setValue("#notifMaxPerRun", thresholds.max_notifications_per_run ?? 50);
+  const password = $("#notifEmailPassword");
+  if (password) { password.value = ""; password.placeholder = email.has_password ? "Stored — leave empty to keep" : "Stored server-side"; }
+  const token = $("#notifEmailToken");
+  if (token) { token.value = ""; token.placeholder = email.has_token ? "Stored — leave empty to keep" : "Stored server-side"; }
+  const secret = $("#notifWebhookSecret");
+  if (secret) { secret.value = ""; secret.placeholder = webhook.has_secret ? "Stored — leave empty to keep" : "Stored server-side"; }
+}
+function renderNotificationInbox(payload) {
+  const notifications = Array.isArray(payload?.notifications) ? payload.notifications : [];
+  const summary = payload?.summary || {};
+  $("#notifUnacked").textContent = Number(summary.unacknowledged || 0).toLocaleString();
+  $("#notifCritical").textContent = Number(summary.critical || 0).toLocaleString();
+  $("#notifWarning").textContent = Number(summary.warning || 0).toLocaleString();
+  $("#notifInfo").textContent = Number(summary.info || 0).toLocaleString();
+  $("#notifRows").innerHTML = notifications.length ? notifications.map((item) => {
+    const channels = Array.isArray(item.delivered) && item.delivered.length ? ` · ${escapeText(item.delivered.join(", "))}` : "";
+    const action = item.acknowledged
+      ? '<span class="planning-signal signal-ok">Acknowledged</span>'
+      : `<button class="button button-quiet" type="button" data-notif-ack="${escapeText(item.id)}">Acknowledge</button>`;
+    return `<li class="monitoring-warning severity-${escapeText(item.severity)}"><div><strong>${escapeText(NOTIF_SEVERITY_LABELS[item.severity] || item.severity)} · ${escapeText(item.title)}</strong><span>${escapeText(item.message)}</span><span class="notification-meta">${escapeText(item.route || "all routes")}${channels}</span></div><em>${escapeText(item.action || "Review the dashboard.")}</em>${action}</li>`;
+  }).join("") : '<li class="monitoring-empty">No notifications yet. Run an evaluation to check the configured thresholds.</li>';
+  fillNotificationPolicy(payload?.policy || {});
+}
+function collectNotificationPolicy() {
+  const recipients = ($("#notifEmailRecipients").value || "").split(",").map((value) => value.trim()).filter(Boolean);
+  const numberOrUndefined = (selector) => { const raw = ($(selector).value || "").trim(); if (raw === "") return undefined; const value = Number(raw); return Number.isFinite(value) ? value : undefined; };
+  const payload = {
+    in_app: { enabled: $("#notifInAppEnabled").value === "true" },
+    email: {
+      enabled: $("#notifEmailEnabled").value === "true",
+      provider: $("#notifEmailProvider").value,
+      host: $("#notifEmailHost").value.trim(),
+      use_tls: $("#notifEmailTls").value === "true",
+      username: $("#notifEmailUser").value.trim(),
+      sender: $("#notifEmailSender").value.trim(),
+      recipients,
+      url: $("#notifEmailUrl").value.trim(),
+    },
+    webhook: { enabled: $("#notifWebhookEnabled").value === "true", url: $("#notifWebhookUrl").value.trim() },
+    thresholds: {
+      min_severity: $("#notifMinSeverity").value,
+      capacity_utilization_percent: numberOrUndefined("#notifCapacityUtil"),
+      min_predicted_passengers: numberOrUndefined("#notifMinPassengers"),
+      max_forecast_error_percent: numberOrUndefined("#notifMaxError"),
+      demand_change_percent: numberOrUndefined("#notifDemandChange"),
+      max_notifications_per_run: numberOrUndefined("#notifMaxPerRun"),
+    },
+  };
+  const port = numberOrUndefined("#notifEmailPort");
+  if (port !== undefined) payload.email.port = Math.round(port);
+  const password = $("#notifEmailPassword").value;
+  if (password) payload.email.password = password;
+  const token = $("#notifEmailToken").value;
+  if (token) payload.email.token = token;
+  const secret = $("#notifWebhookSecret").value;
+  if (secret) payload.webhook.secret = secret;
+  for (const section of ["email", "thresholds"]) {
+    for (const [key, value] of Object.entries(payload[section])) if (value === undefined) delete payload[section][key];
+  }
+  return payload;
+}
+async function loadNotificationsPage() {
+  const note = $("#notifStatusNote");
+  if (!note) return;
+  note.textContent = "Loading notifications and reports…";
+  try {
+    const [inbox, reportCatalog, capacity] = await Promise.all([
+      api("/api/notifications"),
+      api("/api/reports"),
+      api("/api/reports/capacity"),
+    ]);
+    renderNotificationInbox(inbox);
+    renderReports(reportCatalog, capacity);
+    note.textContent = "Notifications, channels, and report availability loaded.";
+  } catch (error) {
+    note.textContent = /access key/i.test(error.message)
+      ? "Notifications need an operator access key. Add it in Settings to read alerts and export reports."
+      : `Notifications unavailable: ${error.message}`;
+  }
+}
+async function evaluateNotifications() {
+  const status = $("#notifRunStatus");
+  status.textContent = "Evaluating configured thresholds…";
+  try {
+    const result = await api("/api/notifications/evaluate", { method: "POST" });
+    renderNotificationInbox(await api("/api/notifications"));
+    const delivery = result.delivery || {};
+    const parts = [`${result.notifications.length} notification(s)`, `in-app ${delivery.in_app ?? 0}`];
+    if (delivery.email?.enabled) parts.push(`email sent ${delivery.email.sent}, failed ${delivery.email.failed}`);
+    if (delivery.webhook?.enabled) parts.push(`webhook sent ${delivery.webhook.sent}, failed ${delivery.webhook.failed}`);
+    status.textContent = `${parts.join(" · ")}. Nothing was retrained.`;
+    toast("Notification evaluation complete");
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message, true);
+  }
+}
+async function acknowledgeNotificationItem(id) {
+  try {
+    await api(`/api/notifications/${encodeURIComponent(id)}/acknowledge`, { method: "POST" });
+    renderNotificationInbox(await api("/api/notifications"));
+    toast("Notification acknowledged");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+async function saveNotificationPolicy() {
+  const status = $("#notifPolicyStatus");
+  status.textContent = "Saving settings…";
+  try {
+    const result = await api("/api/notifications/policy", { method: "PUT", body: JSON.stringify(collectNotificationPolicy()) });
+    fillNotificationPolicy(result.policy);
+    status.textContent = "Settings saved. Secrets stay on the server.";
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message, true);
+  }
+}
+function renderReports(payload, capacityPayload) {
+  const reports = Array.isArray(payload?.reports) ? payload.reports : [];
+  $("#reportsRows").innerHTML = reports.length ? reports.map((report) => {
+    const status = report.available
+      ? `<span class="planning-signal signal-ok">${Number(report.rows).toLocaleString()} rows</span>`
+      : `<span class="planning-signal signal-muted" title="${escapeText(report.unavailable_reason || "")}">Unavailable</span><span class="report-reason">${escapeText(report.unavailable_reason || "")}</span>`;
+    const actions = report.available
+      ? `<button class="button button-quiet" type="button" data-report-csv="${escapeText(report.id)}">CSV ↓</button> <button class="button button-quiet" type="button" data-report-print="${escapeText(report.id)}">Print</button>`
+      : "—";
+    return `<tr><td><strong>${escapeText(report.title)}</strong></td><td class="report-description">${escapeText(report.description)}</td><td>${status}</td><td class="report-actions">${actions}</td></tr>`;
+  }).join("") : '<tr class="empty-row"><td colspan="4">Report availability loads with the workspace.</td></tr>';
+  const available = reports.filter((report) => report.available).length;
+  $("#reportsStatusNote").textContent = `${available} of ${reports.length} reports available. ${payload?.notice || ""}`;
+  const capacity = capacityPayload?.capacity || {};
+  const editor = $("#capacityJson");
+  if (editor && document.activeElement !== editor) editor.value = Object.keys(capacity).length ? JSON.stringify(capacity, null, 2) : "";
+}
+async function openPrintableReport(reportId) {
+  const headers = new Headers();
+  if (accessKey()) headers.set("Authorization", `Bearer ${accessKey()}`);
+  try {
+    const response = await fetch(`${apiBase()}/api/reports/${encodeURIComponent(reportId)}.html`, { headers, cache: "no-store" });
+    if (!response.ok) {
+      let message = `Report failed (${response.status})`;
+      try { message = (await response.json()).detail || message; } catch (_) {}
+      throw new Error(message);
+    }
+    const url = URL.createObjectURL(new Blob([await response.text()], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+async function saveCapacityAssumptions() {
+  const status = $("#capacityStatus");
+  let parsed;
+  try {
+    const raw = $("#capacityJson").value.trim();
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    status.textContent = "Enter valid JSON before saving.";
+    return;
+  }
+  status.textContent = "Saving capacity assumptions…";
+  try {
+    await api("/api/reports/capacity", { method: "PUT", body: JSON.stringify({ capacity: parsed }) });
+    renderReports(await api("/api/reports"), await api("/api/reports/capacity"));
+    status.textContent = "Capacity assumptions saved.";
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message, true);
+  }
 }
 function renderDataPage(data) {
   const source = data.source === "synthetic demo data" ? "Synthetic demo" : data.source === "company upload" ? "Company upload" : data.source === "company feed" ? "Connected feed" : "No data";
@@ -743,8 +1140,20 @@ function setup() {
     refreshStatus();
   });
   $("#settingsButton").addEventListener("click", () => { $("#apiKey").value = accessKey(); $("#apiUrl").value = localStorage.getItem("busForecastApiUrl") || ""; $("#settingsDialog").showModal(); });
-  $("#saveKey").addEventListener("click", () => { const key = $("#apiKey").value.trim(), rawUrl = $("#apiUrl").value.trim(); if (rawUrl) { try { const parsed = new URL(rawUrl); if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(); localStorage.setItem("busForecastApiUrl", parsed.origin); } catch (_) { toast("Enter a valid API address starting with http:// or https://", true); return; } } else localStorage.removeItem("busForecastApiUrl"); key ? localStorage.setItem("busForecastApiKey", key) : localStorage.removeItem("busForecastApiKey"); $("#settingsDialog").close(); refreshStatus(); });
-  $("#clearKey").addEventListener("click", () => { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); $("#apiKey").value = ""; $("#apiUrl").value = ""; toast("Connection reset on this device"); });
+  $("#saveKey").addEventListener("click", () => { const key = $("#apiKey").value.trim(), rawUrl = $("#apiUrl").value.trim(); if (rawUrl) { try { const parsed = new URL(rawUrl); if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(); localStorage.setItem("busForecastApiUrl", parsed.origin); } catch (_) { toast("Enter a valid API address starting with http:// or https://", true); return; } } else localStorage.removeItem("busForecastApiUrl"); key ? localStorage.setItem("busForecastApiKey", key) : localStorage.removeItem("busForecastApiKey"); $("#settingsDialog").close(); refreshStatus(); void loadIdentity(true); });
+  $("#clearKey").addEventListener("click", () => { localStorage.removeItem("busForecastApiKey"); localStorage.removeItem("busForecastApiUrl"); $("#apiKey").value = ""; $("#apiUrl").value = ""; toast("Connection reset on this device"); void loadIdentity(true); });
+  $("#monSavePolicy").addEventListener("click", () => { void saveMonitoringPolicy(); });
+  $("#notifSavePolicy").addEventListener("click", () => { void saveNotificationPolicy(); });
+  $("#notifRun").addEventListener("click", () => { void evaluateNotifications(); });
+  $("#notifRows").addEventListener("click", (event) => { const button = event.target.closest("[data-notif-ack]"); if (button) void acknowledgeNotificationItem(button.dataset.notifAck); });
+  $("#reportsRows").addEventListener("click", (event) => {
+    const csvButton = event.target.closest("[data-report-csv]");
+    if (csvButton) { void downloadFile(`/api/reports/${csvButton.dataset.reportCsv}.csv`, `bus_demand_${csvButton.dataset.reportCsv}.csv`).catch((error) => toast(error.message, true)); return; }
+    const printButton = event.target.closest("[data-report-print]");
+    if (printButton) void openPrintableReport(printButton.dataset.reportPrint);
+  });
+  $("#capacitySave").addEventListener("click", () => { void saveCapacityAssumptions(); });
+  void loadIdentity();
   $("#routeRows").addEventListener("change", (event) => {
     const input = event.target.closest(".route-plan-input");
     if (!input || !state.data) return;

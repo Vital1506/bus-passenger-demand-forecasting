@@ -66,16 +66,24 @@
         </div>
       </header>
       <nav class="primary-nav" id="mainNav" aria-label="Main navigation">
-        <div class="nav-caption"><span>WORKSPACE</span><small>Start with the guide</small></div>
-        <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Start here</button>
-        <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Forecasts</button>
-        <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Routes</button>
-        <button type="button" data-view="explorer"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m19 19-3.8-3.8"/></svg></span> Explorer</button>
-        <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> My data</button>
-        <button type="button" data-view="model"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9m5 9V5m5 13v-6m5 6V7"/></svg></span> How it works</button>
-        <span class="nav-status"><i></i><span>API checks every minute</span></span>
+        <div class="nav-caption"><span>TRANSIT OPERATIONS</span><small>Start with the guide</small></div>
+        <button type="button" data-view="overview" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Overview</button>
+        <button type="button" data-view="live"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="3.2"/><path d="M3 12a9 9 0 1 1 2.5-6.5"/></svg></span> Live Operations</button>
+        <button type="button" data-view="forecasts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 15l4-5 4 3 6-8"/></svg></span> Demand Forecasts</button>
+        <button type="button" data-view="routes"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h5a3 3 0 0 0 3-3V9"/></svg></span> Route Network</button>
+        <button type="button" data-view="analytics"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h18v6H3zM3 12h18v9H3zM8 19h2M13 19h2M18 19h1"/></svg></span> Passenger Analytics</button>
+        <button type="button" data-view="occupancy"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4z"/><path d="M8 7v10M12 7v10M16 7v10"/></svg></span> Occupancy &amp; Capacity</button>
+        <button type="button" data-view="alerts"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v3a7 7 0 0 0 14 0v-3a7 7 0 0 0-7-7z"/><path d="M10 21h4v-3a3 3 0 0 0-6 0v3z"/></svg></span> Smart Alerts</button>
+        <button type="button" data-view="planner"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 18h-4v-4h-2v4h-4v-2h4v-4h2v4h4v2z"/></svg></span> Service Planner</button>
+        <span class="nav-divider" aria-hidden="true"></span>
+        <span class="nav-section-label">References</span>
+        <button type="button" data-view="explorer"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m19 19-3.8-3.8"/></svg></span> Historical Explorer</button>
+        <button type="button" data-view="data"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg></span> Data Sources</button>
+        <button type="button" data-view="monitoring"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 8v4l3 2"/><path d="M21 3v6h-6"/></svg></span> Model Monitoring</button>
+        <button type="button" data-view="settings"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M3 12h18M5 5l14 14M5 19L19 5"/></svg></span> Settings</button>
+        <span class="nav-status"><i class="live-dot"></i><span>API checks every minute</span></span>
       </nav>
-      <div class="page-intro"><div><p class="eyebrow">OPERATIONS WORKSPACE</p><h2 id="pageTitle">Overview</h2></div><p id="pageSummary">A quick read on service demand and forecast freshness.</p></div>
+      <div class="page-intro"><div><p class="eyebrow"><span class="data-label data-label-live" data-label-type="live">LIVE</span><span class="data-label data-label-historical" data-label-type="historical">HISTORICAL</span><span class="data-label data-label-forecast" data-label-type="forecast">FORECAST</span><span class="data-label data-label-synthetic" data-label-type="synthetic">SYNTHETIC DEMO</span><span class="data-label data-label-imported" data-label-type="imported">IMPORTED</span><span class="data-label data-label-stale" data-label-type="stale">STALE</span><span class="data-label data-label-unavailable" data-label-type="unavailable">UNAVAILABLE</span></p><h2 id="pageTitle">Operations workspace</h2></div><p id="pageSummary">Transit demand forecasts, route network, occupancy, alerts, and monitoring — with every number labelled as LIVE, HISTORICAL, FORECAST, SYNTHETIC DEMO, IMPORTED, STALE, or UNAVAILABLE.</p></div>
 
       <main>
         <section class="hero" data-pages="overview">
@@ -149,6 +157,7 @@
 
         <section class="panel table-panel" data-pages="forecasts">
           <div class="panel-heading"><div><p class="eyebrow">ROUTE LEVEL DETAIL</p><h2>Forecast by service date</h2></div><a id="downloadForecast" class="button button-quiet disabled-link" href="/api/forecast.csv" download>Download CSV <span>↓</span></a></div>
+          <p class="table-footnote" role="status" aria-live="polite"><span id="forecastSourceLabel" class="data-label data-label-forecast" data-label-type="forecast">FORECAST</span><span id="forecastViewStatus">Loading forecast state…</span></p>
           <div class="table-scroll"><table><thead><tr><th>SERVICE DATE</th><th>ROUTE</th><th class="numeric">PREDICTED BOARDINGS</th><th class="numeric">APPROXIMATE RANGE</th></tr></thead><tbody id="forecastRows"><tr class="empty-row"><td colspan="4">Forecast rows will appear after model training.</td></tr></tbody></table></div>
           <p class="table-footnote">Approximate range based on historical backtest errors. It is not a guarantee.</p>
         </section>
@@ -198,7 +207,7 @@
           </div>
         </section>
 
-        <section class="page-panel panel" data-pages="routes" id="routesPage">
+        <section class="page-panel panel" data-pages="routes" id="routesPage" hidden>
           <div class="panel-heading"><div><p class="eyebrow">SERVICE PERFORMANCE</p><h2>Route outlook</h2></div><span class="horizon-badge">Forecast totals</span></div>
           <p class="page-lead">Compare expected boardings across routes for the current forecast window. Estimates update when the connected service publishes a new forecast.</p>
           <div class="summary-cards"><article><small>Routes forecast</small><strong id="routesTotal">—</strong></article><article><small>Window boardings</small><strong id="routesBoardings">—</strong></article><article><small>Average per route / day</small><strong id="routesDailyAverage">—</strong></article><article><small>Routes to review</small><strong id="routesReview">—</strong></article></div>
@@ -206,7 +215,7 @@
           <div class="route-table-tools"><button id="exportRoutePlan" class="button button-primary" type="button">Export planning CSV ↓</button><button id="resetRoutePlans" class="button button-quiet" type="button">Clear route assumptions</button></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th>PEAK FORECAST DAY</th><th class="numeric">BOARDINGS (POINT / HIGH)</th><th class="numeric">PLANNED TRIPS / DAY</th><th class="numeric">TARGET / TRIP</th><th class="numeric">AVG / TRIP (POINT / HIGH)</th><th class="numeric">TRIPS AT TARGET (POINT / HIGH)</th><th>REVIEW SIGNAL</th></tr></thead><tbody id="routeRows"><tr class="empty-row"><td colspan="7">Route summaries will appear with forecasts.</td></tr></tbody></table></div>
         </section>
-        <section class="page-panel panel monthly-explorer" data-pages="explorer" id="explorerPage">
+        <section class="page-panel panel monthly-explorer" data-pages="explorer" id="explorerPage" hidden>
           <div class="panel-heading">
             <div><p class="eyebrow">CHICAGO CTA · MONTHLY BUS BOARDINGS</p><h2>Smart Route Explorer</h2></div>
             <span class="horizon-badge" id="monthlyExplorerBadge">Loading routes…</span>
@@ -259,7 +268,7 @@
             <p class="explorer-disclaimer">This site provides applications using data that has been modified for use from its original source, www.cityofchicago.org, the official website of the City of Chicago. The City of Chicago makes no claims as to the content, accuracy, timeliness, or completeness of any of the data provided at this site. The data provided at this site is subject to change at any time. It is understood that the data provided at this site is being used at one’s own risk.</p>
           </div>
         </section>
-        <section class="page-panel panel" data-pages="data" id="dataPage">
+        <section class="page-panel panel" data-pages="data" id="dataPage" hidden>
           <div class="panel-heading"><div><p class="eyebrow">INPUTS & FRESHNESS</p><h2>Data operations</h2></div><span class="horizon-badge">Source status</span></div>
           <p class="page-lead">Check the observations behind the current forecast and manage approved daily route-count data.</p>
           <div class="summary-cards"><article><small>Source</small><strong id="dataSource">—</strong></article><article><small>Route-day records</small><strong id="dataRows">—</strong></article><article><small>Routes covered</small><strong id="dataRoutes">—</strong></article><article><small>Latest service date</small><strong id="dataLatest">—</strong></article></div>
@@ -278,7 +287,7 @@ Content-Type: application/json
           <section class="activity-panel" aria-labelledby="activityTitle"><div><h3 id="activityTitle">Recent data activity</h3><p>Aggregate updates only; passenger-level rows are not copied into this activity list.</p></div><ol id="activityRows"><li class="activity-empty">No data updates recorded yet.</li></ol></section>
           <div class="connector-note"><strong>Live telemetry needs a separate adapter</strong><p>This endpoint accepts daily counts. It does not connect to ticketing or AVL/GTFS-Realtime systems by itself. A company-approved integration must map the source feed, define its schedule, and persist data safely.</p></div>
         </section>
-        <section class="page-panel panel" data-pages="model" id="modelPage">
+        <section class="page-panel panel" data-pages="model" id="modelPage" hidden>
           <div class="panel-heading"><div><p class="eyebrow">MODEL QUALITY</p><h2>Model & validation</h2></div><span class="horizon-badge">Time-based evaluation</span></div>
           <p class="page-lead">In plain language: the model looks at daily counts you provide, learns patterns such as weekday differences, and estimates future counts. A place name by itself does not reveal how many people actually ride a bus.</p>
           <div class="model-explainer"><div><strong>1. Record what happened</strong><p>Enter one route and one date at a time, or import an existing daily-count file. Do not guess missing passenger counts.</p></div><div><strong>2. Build enough history</strong><p>The prototype needs about 118 continuous dates per route before its time-based model check can run.</p></div><div><strong>3. Forecast and explain</strong><p>It compares the machine-learning model with a simple weekday baseline and shows an approximate error range.</p></div><div><strong>4. Review with people</strong><p>Compare estimates with actual counts and service changes. Sample forecasts are for learning, not operational decisions.</p></div></div>
@@ -286,14 +295,202 @@ Content-Type: application/json
           <div class="model-explainer"><div><strong>What this score means</strong><p>WAPE is total absolute forecast error divided by total observed boardings across backtest periods. Compare scores across the same dates and data definition.</p></div><div><strong>Before operational use</strong><p>Validate with your service calendar, disruptions, route changes, and a shadow run. Forecast intervals are approximate historical error ranges.</p></div></div>
           <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER BACKTEST</th></tr></thead><tbody id="modelRows"><tr class="empty-row"><td colspan="4">Per-route validation appears after model training.</td></tr></tbody></table></div>
         </section>
-        <section class="bottom-strip" data-pages="overview forecasts routes explorer data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
+        
+        <section class="page-panel panel" data-pages="monitoring" id="monitoringPage" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">MODEL MONITORING</p><h2>Model and data health</h2></div><span class="horizon-badge">Read-only</span></div>
+          <p class="page-lead">Which model is deployed, what it was trained on, how accurate it has been overall, by route and by forecast horizon, how fresh the inputs are, and whether the data has shifted. Nothing on this page retrains a model, promotes a model, or changes a forecast.</p>
+          <p id="monStatusNote" class="explorer-hint" role="status" aria-live="polite">Loading monitoring…</p>
+          <div class="summary-cards">
+            <article><small>Model version</small><strong id="monModelVersion">—</strong></article>
+            <article><small>Trained at</small><strong id="monTrainedAt">—</strong></article>
+            <article><small>Trained through</small><strong id="monTrainedThrough">—</strong></article>
+            <article><small>Forecast horizon</small><strong id="monHorizon">—</strong></article>
+          </div>
+          <div class="summary-cards">
+            <article><small>Routes trained</small><strong id="monRoutes">—</strong></article>
+            <article><small>Training-data coverage</small><strong id="monCoverage">—</strong></article>
+            <article><small>Last observed data</small><strong id="monLastObserved">—</strong></article>
+            <article><small>Latest forecast</small><strong id="monLastForecast">—</strong></article>
+          </div>
+          <div class="summary-cards">
+            <article><small>Historical MAE</small><strong id="monMae">—</strong></article>
+            <article><small>Historical RMSE</small><strong id="monRmse">—</strong></article>
+            <article><small>Historical WAPE</small><strong id="monWape">—</strong></article>
+            <article><small>Seasonal-naive baseline WAPE</small><strong id="monBaselineWape">—</strong></article>
+          </div>
+          <div class="summary-cards">
+            <article><small>Baseline comparison</small><strong id="monVerdict">—</strong></article>
+            <article><small>Missing data</small><strong id="monMissing">—</strong></article>
+            <article><small>Model age</small><strong id="monModelAge">—</strong></article>
+            <article><small>Data / forecast age</small><strong id="monDataAge" title="Passenger data age">—</strong><small id="monForecastAge">Forecast —</small></article>
+          </div>
+          <section class="monitoring-block" aria-labelledby="monWarningsTitle">
+            <h3 id="monWarningsTitle">Warnings and degradation signals</h3>
+            <ul id="monWarnings" class="monitoring-warnings"><li class="monitoring-empty">No warnings: every configured check is within its threshold.</li></ul>
+          </section>
+          <section class="monitoring-block" aria-labelledby="monRouteErrorTitle">
+            <h3 id="monRouteErrorTitle">Error by route</h3>
+            <p class="table-footnote">Absolute error and WAPE from the evaluation period, compared with the seasonal-naive baseline on the same rows.</p>
+            <div class="table-scroll"><table><thead><tr><th>ROUTE</th><th class="numeric">MODEL MAE</th><th class="numeric">MODEL RMSE</th><th class="numeric">MODEL WAPE</th><th class="numeric">BASELINE WAPE</th><th>BETTER</th></tr></thead><tbody id="monRouteRows"><tr class="empty-row"><td colspan="6">Route error appears after training.</td></tr></tbody></table></div>
+          </section>
+          <section class="monitoring-block" aria-labelledby="monHorizonErrorTitle">
+            <h3 id="monHorizonErrorTitle">Error by forecast horizon</h3>
+            <p class="table-footnote">Error grows with lead time; these rows come from the time-based evaluation, not from the live forecast.</p>
+            <div class="table-scroll"><table><thead><tr><th>HORIZON (DAYS)</th><th class="numeric">MAE</th><th class="numeric">RMSE</th><th class="numeric">WAPE</th></tr></thead><tbody id="monHorizonRows"><tr class="empty-row"><td colspan="4">Horizon error appears after training.</td></tr></tbody>
+            <tbody id="monDistributionRows"><tr class="empty-row"><td colspan="5">Distribution checks appear when enough observations exist.</td></tr></tbody></table></div>
+          </section>
+          <section class="monitoring-block" aria-labelledby="monRetrainingTitle">
+            <h3 id="monRetrainingTitle">Retraining checks</h3>
+            <p class="table-footnote">Checks run after the model is updated; the recommendation is advisory and never promotes a model automatically.</p>
+            <div class="summary-cards">
+              <article><small>Retraining verdict</small><strong id="monRetrainingVerdict">—</strong></article>
+              <article><small>Retraining summary</small><strong id="monRetrainingSummary">—</strong></article>
+            </div>
+            <div class="table-scroll"><table><thead><tr><th>CHECK</th><th>CURRENT</th><th>THRESHOLD</th><th>STATUS</th></tr></thead><tbody id="monRetrainingChecks"><tr class="empty-row"><td colspan="4">Retraining checks appear after a model update.</td></tr></tbody></table></div>
+            <div class="flow-controls" style="margin-top:14px"><button id="monSavePolicy" class="button button-primary" type="button">Save monitoring policy</button><span id="monPolicyStatus" class="monitoring-policy-status" role="status" aria-live="polite"></span></div>
+          </section>
+        </section>
+
+        
+        <section class="page-panel panel" data-pages="live" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">LIVE OPERATIONS</p><h2>Live demand</h2></div><span class="data-label data-label-unavailable" data-label-type="unavailable">UNAVAILABLE</span></div>
+          <p class="page-lead">A rolling view of the latest observed counts and the forecast that refreshes as new daily counts arrive.</p>
+          <p class="table-footnote">No live operational feed is connected in this deployment, so this page is a shell. The current demand outlook is on Demand Forecasts; recorded counts are under Data Sources.</p>
+        </section>
+
+        <section class="page-panel panel" data-pages="analytics" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">PASSENGER ANALYTICS</p><h2>Historical passenger trends</h2></div><span class="data-label data-label-historical" data-label-type="historical">HISTORICAL</span></div>
+          <p class="page-lead">Monthly observed boardings by route, with gaps shown as gaps rather than zeros.</p>
+          <p class="table-footnote">This page is a shell. The monthly explorer that already renders observed history lives on Historical Explorer.</p>
+        </section>
+
+        <section class="page-panel panel" data-pages="occupancy" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">OCCUPANCY &amp; CAPACITY</p><h2>Capacity and occupancy</h2></div><span class="data-label data-label-unavailable" data-label-type="unavailable">UNAVAILABLE</span></div>
+          <p class="page-lead">Projected occupancy and capacity utilisation derived from the forecast and per-route capacity assumptions.</p>
+          <p class="table-footnote">This page is a shell. Capacity assumptions are edited on Alerts &amp; reports, where the capacity-risk report is produced. No occupancy projection is computed yet.</p>
+        </section>
+
+        <section class="page-panel panel" data-pages="alerts" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">SMART ALERTS</p><h2>Operator alerts</h2></div><span class="data-label data-label-live" data-label-type="live">LIVE</span></div>
+          <p class="page-lead">In-app, email, and webhook alerts for the demand, data-quality, and model checks this prototype computes.</p>
+          <p class="table-footnote">This page is a shell. Alert channels, thresholds, and the delivery log are on Alerts &amp; reports; alerts never contain individual passenger records.</p>
+        </section>
+
+        <section class="page-panel panel" data-pages="planner" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">SERVICE PLANNER</p><h2>Service plan</h2></div><span class="data-label data-label-forecast" data-label-type="forecast">FORECAST</span></div>
+          <p class="page-lead">Route totals, review counts, and an exportable draft plan derived from the current forecast.</p>
+          <p class="table-footnote">This page is a shell. Route totals and plan export are on Route Network. Planning output is advisory and never publishes a timetable.</p>
+        </section>
+
+        <section class="page-panel panel" data-pages="settings" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">SETTINGS</p><h2>Connection and agent</h2></div><span class="data-label data-label-imported" data-label-type="imported">IMPORTED</span></div>
+          <p class="page-lead">API endpoint, key, and the signed-in agent identity this browser uses.</p>
+          <p class="table-footnote">This page is a shell. The connection form opens from the Settings button in the top bar; the agent badge stays in the top bar. This page does not manage principals.</p>
+        </section>
+
+<section class="page-panel panel" data-pages="notifications" id="notificationsPage" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">NOTIFICATIONS & REPORTING</p><h2>Operator alerts</h2></div><span class="horizon-badge">Aggregate only</span></div>
+          <p class="page-lead">In-app alerts, email, and webhooks for the demand, data-quality, and model checks this prototype already computes. Nothing is sent until a channel is configured and you run an evaluation. Notifications never contain individual passenger records.</p>
+          <p id="notifStatusNote" class="explorer-hint" role="status" aria-live="polite">Loading notifications…</p>
+          <div class="summary-cards">
+            <article><small>Open notifications</small><strong id="notifUnacked">—</strong></article>
+            <article><small>Critical</small><strong id="notifCritical">—</strong></article>
+            <article><small>Warning</small><strong id="notifWarning">—</strong></article>
+            <article><small>Info</small><strong id="notifInfo">—</strong></article>
+          </div>
+          <section class="monitoring-block" aria-labelledby="notifListTitle">
+            <h3 id="notifListTitle">In-app notifications</h3>
+            <div class="flow-controls"><button id="notifRun" class="button button-primary" type="button">Evaluate alerts now</button><span id="notifRunStatus" class="monitoring-policy-status" role="status" aria-live="polite"></span></div>
+            <ul id="notifRows" class="monitoring-warnings"><li class="monitoring-empty">No notifications yet. Run an evaluation to check the configured thresholds.</li></ul>
+          </section>
+          <section class="monitoring-block" aria-labelledby="notifChannelsTitle">
+            <h3 id="notifChannelsTitle">Channels and thresholds</h3>
+            <div class="monitoring-policy">
+              <div class="monitoring-policy-grid">
+                <label>In-app notifications<select id="notifInAppEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+                <label>Email notifications<select id="notifEmailEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+                <label>Email provider<select id="notifEmailProvider"><option value="smtp">SMTP</option><option value="http">HTTP API</option></select></label>
+                <label>SMTP host or API URL<input id="notifEmailHost" type="text" maxlength="200" placeholder="smtp.example.com" /></label>
+                <label>SMTP port<input id="notifEmailPort" type="number" min="1" max="65535" step="1" /></label>
+                <label>SMTP TLS<select id="notifEmailTls"><option value="true">Required</option><option value="false">Off</option></select></label>
+                <label>SMTP username<input id="notifEmailUser" type="text" maxlength="200" autocomplete="off" /></label>
+                <label>SMTP password<input id="notifEmailPassword" type="password" maxlength="500" autocomplete="new-password" placeholder="Stored server-side" /></label>
+                <label>Email API URL<input id="notifEmailUrl" type="url" maxlength="500" placeholder="https://mail.example.com/send" /></label>
+                <label>Email API token<input id="notifEmailToken" type="password" maxlength="500" autocomplete="new-password" placeholder="Stored server-side" /></label>
+                <label>Sender address<input id="notifEmailSender" type="text" maxlength="320" placeholder="alerts@example.com" /></label>
+                <label>Recipients (comma separated)<input id="notifEmailRecipients" type="text" placeholder="ops@example.com, dispatch@example.com" /></label>
+                <label>Webhook notifications<select id="notifWebhookEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+                <label>Webhook URL<input id="notifWebhookUrl" type="url" maxlength="500" placeholder="https://hooks.example.com/bus" /></label>
+                <label>Webhook secret<input id="notifWebhookSecret" type="password" maxlength="500" autocomplete="new-password" placeholder="Stored server-side" /></label>
+                <label>Minimum severity<select id="notifMinSeverity"><option value="info">Info</option><option value="warning">Warning</option><option value="critical">Critical</option></select></label>
+                <label>Minimum predicted passengers<input id="notifMinPassengers" type="number" min="0" step="1" /></label>
+                <label>Capacity utilization (%)<input id="notifCapacityUtil" type="number" min="1" max="1000" step="1" /></label>
+                <label>Forecast error ceiling (%)<input id="notifMaxError" type="number" min="0" max="1000" step="1" /></label>
+                <label>Demand change threshold (%)<input id="notifDemandChange" type="number" min="1" max="1000" step="1" /></label>
+                <label>Maximum notifications per run<input id="notifMaxPerRun" type="number" min="1" max="500" step="1" /></label>
+              </div>
+              <div class="flow-controls" style="margin-top:14px"><button id="notifSavePolicy" class="button button-primary" type="button">Save notification settings</button><span id="notifPolicyStatus" class="monitoring-policy-status" role="status" aria-live="polite"></span></div>
+              <p class="count-hint">Secrets are stored on the server and never returned to this page. Leave a password, token, or secret field empty to keep the stored value. Email and webhook delivery only happens during an evaluation run, and provider failures are reported without stopping the run.</p>
+            </div>
+          </section>
+          <section class="monitoring-block" aria-labelledby="reportsTitle">
+            <h3 id="reportsTitle">Downloadable reports</h3>
+            <p class="table-footnote">Every report is aggregate: route and calendar level counts only. CSV is machine readable; the printable view opens a print-ready page for PDF export.</p>
+            <p id="reportsStatusNote" class="explorer-hint" role="status" aria-live="polite">Loading reports…</p>
+            <div class="table-scroll"><table><thead><tr><th>REPORT</th><th>WHAT IT CONTAINS</th><th>STATUS</th><th>EXPORT</th></tr></thead><tbody id="reportsRows"><tr class="empty-row"><td colspan="4">Report availability loads with the workspace.</td></tr></tbody></table></div>
+            <div class="monitoring-policy">
+              <h4>Capacity assumptions (capacity-risk report)</h4>
+              <p class="table-footnote">JSON keyed by route, for example <code>{"R1": {"seats_per_vehicle": 55, "peak_headway_minutes": 12, "off_peak_headway_minutes": 20}}</code>. The capacity-risk report stays unavailable until at least one route is configured.</p>
+              <label class="sr-only" for="capacityJson">Capacity assumptions JSON</label>
+              <textarea id="capacityJson" rows="4" class="capacity-json" spellcheck="false"></textarea>
+              <div class="flow-controls"><button id="capacitySave" class="button button-quiet" type="button">Save capacity assumptions</button><span id="capacityStatus" class="monitoring-policy-status" role="status" aria-live="polite"></span></div>
+            </div>
+          </section>
+        </section>
+
+        <section class="topbar-identity" id="identitySection" hidden>
+          <span id="identity" class="identity" aria-live="polite"></span>
+        </section>
+
+<section class="bottom-strip" data-pages="overview forecasts routes explorer data model"><span><i class="live-dot"></i> Status checks every 60 seconds while this page is open</span><span>Planning support · review estimates before acting</span><span>Forecast estimates · operational feed not connected</span></section>
       </main>
       <footer data-pages="overview forecasts routes explorer data model"><span>ROUTE / SIGNAL</span><span>PLAN WITH PASSENGER DEMAND IN VIEW</span></footer>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <dialog id="settingsDialog" class="settings-dialog"><form method="dialog"><div class="dialog-head"><div><p class="eyebrow">SECURE CONNECTION</p><h2>API access</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div><p>Connect this app to your local service or the shared service address from your administrator. The address and access key are stored on this device only.</p><label for="apiUrl">API service address</label><input id="apiUrl" type="url" autocomplete="url" placeholder="Uses the service hosting this page" /><label for="apiKey" class="key-label">Bearer access key</label><input id="apiKey" type="password" autocomplete="off" placeholder="Paste key supplied by your administrator" /><div class="dialog-actions"><button id="clearKey" class="button button-quiet" type="button">Reset connection</button><button id="saveKey" class="button button-primary" value="default">Save connection <span>→</span></button></div></form></dialog>
-    <script type="module" src="/static/app.js"></script>
+          <script>
+      (function wireDataLabels(){
+        var hero = document.querySelector('#heroCta');
+        var source = document.querySelector('#sourceLabel');
+        var updated = document.querySelector('#updatedLabel');
+        if(!hero || !source || !updated) return;
+        if(/synthetic demo/i.test(hero.closest('section')?.dataset?.pages || '')){
+          dataLabelAddClass('synthetic');
+        } else if(/waiting for data/i.test(source.textContent.trim())){
+          dataLabelAddClass('unavailable');
+        } else if(/no forecast/i.test(updated.textContent.trim())){
+          dataLabelAddClass('stale');
+        } else {
+          dataLabelAddClass('forecast');
+        }
+        function dataLabelAddClass(type){
+          var chips = document.querySelectorAll('.data-label');
+          for(var i=0;i<chips.length;i++){ chips[i].style.opacity = (chips[i].getAttribute('data-label-type')===type)?'1':'0.25'; }
+        }
+      })();
+      </script>
+<script type="module" src="/static/app.js"></script>
   </body>
 </html>
+      .data-label{display:inline-block;font:700 10px/1 var(--mono);letter-spacing:.08em;padding:3px 7px;border-radius:999px;text-transform:uppercase;white-space:nowrap;margin-right:5px}
+      .data-label-live{background:#d6f5e3;color:#0b6b3f}
+      .data-label-historical{background:#e8eef5;color:#34506b}
+      .data-label-forecast{background:#dce7ff;color:#22427a}
+      .data-label-synthetic{background:#f3e7dd;color:#8a5a2a}
+      .data-label-imported{background:#e2f4ec;color:#1c7a5a}
+      .data-label-stale{background:#fbf0dc;color:#7a6220}
+      .data-label-unavailable{background:#f0e7e7;color:#8a3f3f}
+      .data-label[data-label-type="live"]{animation:livePulse 1.6s ease-in-out infinite}
+      @keyframes livePulse{0%,100%{box-shadow:0 0 0 0 #d6f5e366}50%{box-shadow:0 0 0 4px #d6f5e322}}
 

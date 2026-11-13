@@ -329,3 +329,40 @@ body{background:radial-gradient(ellipse at 12% 0%,#eee6f7 0,transparent 34%),var
 .stops-list .stop-coords{font:10px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
 .stops-list li:nth-child(even){background:rgba(#fff,.4)}
 #gtfsNetworkBadge{font-size:10px}
+
+/* Phase 7: model monitoring page. */
+.monitoring-block{margin:22px 0 0;padding-top:18px;border-top:1px solid var(--line)}
+.monitoring-block h3{font:700 15px var(--display);color:#16363b;margin:0 0 4px}
+.monitoring-warnings,.monitoring-checks{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:8px}
+.monitoring-warning,.monitoring-check{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:11px 13px;border:1px solid #e2ede9;border-radius:11px;background:#fbfdfc}
+.monitoring-warning div,.monitoring-check div{display:grid;gap:3px}
+.monitoring-warning strong,.monitoring-check strong{font-size:12px;color:#1d4444}
+.monitoring-warning span,.monitoring-check span{font-size:11px;color:#526b70;line-height:1.5}
+.monitoring-warning em{font-style:normal;font-size:10.5px;color:#315558;max-width:42%;text-align:right;line-height:1.5}
+.monitoring-warning.severity-critical{border-color:#eec4b6;background:#fdf4f0}
+.monitoring-warning.severity-critical strong{color:#8f3a29}
+.monitoring-warning.severity-info{background:#f2f8fb;border-color:#d6e6ee}
+.monitoring-empty{margin:10px 0 0;padding:12px 13px;border-radius:11px;background:var(--soft);color:#526b70;font-size:11px;list-style:none}
+.monitoring-verdict{margin:10px 0 0;font:700 13px var(--mono);color:#124e46}
+.monitoring-policy{margin-top:18px}
+.monitoring-policy h4{margin:0 0 10px;font:700 13px var(--display);color:#16363b}
+.monitoring-policy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:11px}
+.monitoring-policy-grid label{display:grid;gap:5px;font:10px var(--mono);letter-spacing:.04em;color:#526b70}
+.monitoring-policy-grid input{height:38px;padding:0 10px;border:1px solid #d5e2df;border-radius:9px;font:12px var(--mono);color:#24484b;background:#fff}
+.monitoring-policy .flow-controls{margin:12px 0 0;font-size:11px}
+.monitoring-policy-status{color:#315558;font-size:11px}
+@media(max-width:760px){.monitoring-warning{flex-direction:column}.monitoring-warning em{max-width:none;text-align:left}}
+
+/* Phase 8: notifications and reports page. */
+.report-description{white-space:normal;min-width:260px;color:#526b70}
+.report-actions{white-space:nowrap}
+.report-actions .button{height:32px;padding:0 10px;font-size:11px}
+.report-reason{display:block;margin-top:4px;color:#7b8d8f;font-size:10px;white-space:normal;max-width:260px}
+.notification-meta{font:10px var(--mono);color:#7b8d8f}
+.monitoring-warning .button{height:32px;padding:0 10px;font-size:11px;align-self:center}
+.capacity-json{width:100%;margin-top:8px;padding:10px;border:1px solid #d5e2df;border-radius:9px;background:#fff;color:#24484b;font:11px/1.6 var(--mono);resize:vertical}
+.identity{display:inline-flex;align-items:center;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:#fff;color:#4b6062;font:10px var(--mono)}
+.identity[data-role="admin"]{border-color:#bfe0d3;background:#f0faf5;color:#1f6b4d}
+.identity[data-role="analyst"]{border-color:#e3d4f0;background:#f9f3fd;color:#6a4a86}
+.permission-blocked{opacity:.5;cursor:not-allowed}
+@media(max-width:760px){.identity{display:none}}
