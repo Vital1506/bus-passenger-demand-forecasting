@@ -50,11 +50,11 @@ def seasonal_naive_forecast(history: pd.DataFrame, horizon: int) -> pd.DataFrame
     last_date = pd.to_datetime(working["service_date"]).max()
     output = []
     for step in range(1, horizon + 1):
-        forecast_date = last_date + pd.Timedelta(days=step)
+        forecast_date = last_date + pd.to_timedelta(step, unit="D")
         lookup = working.set_index(["service_date", "route_id"])["passengers"]
         rows = []
         for route in sorted(working["route_id"].astype(str).unique()):
-            previous_week = forecast_date - pd.Timedelta(days=7)
+            previous_week = forecast_date - pd.to_timedelta(7, unit="D")
             value = float(lookup.loc[(previous_week, route)])
             rows.append({"service_date": forecast_date, "route_id": route, "baseline": value})
         daily = pd.DataFrame(rows)
@@ -81,7 +81,7 @@ def weekday_average_forecast(history: pd.DataFrame, horizon: int) -> pd.DataFram
         deviations = (route_history["passengers"] - route_history["weekday"].map(averages)).abs()
         error_band = float(deviations.quantile(0.90))
         for step in range(1, horizon + 1):
-            service_date = last_date + pd.Timedelta(days=step)
+            service_date = last_date + pd.to_timedelta(step, unit="D")
             prediction = max(0.0, float(averages.get(service_date.dayofweek, route_history["passengers"].mean())))
             rows.append({
                 "service_date": service_date,

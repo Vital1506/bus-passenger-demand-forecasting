@@ -18,6 +18,20 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .db import (
+    check_db_health,
+    check_storage_health,
+    get_db_session,
+    get_migration_status,
+    init_db,
+    record_audit_event as repo_record_audit_event,
+    record_monthly_import_event as repo_record_monthly_import_event,
+    replace_all_daily_counts,
+    get_monthly_observations as repo_get_monthly_observations,
+    get_monthly_route_history as repo_get_monthly_route_history,
+    upsert_monthly_records as repo_upsert_monthly_records,
+    write_source_metadata as repo_write_source_metadata,
+)
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
 from .modeling import weekday_average_forecast
@@ -37,12 +51,33 @@ def project_path(relative: str) -> Path:
 def user_data_dir() -> Path:
     configured = os.getenv("BUS_FORECAST_DATA_DIR")
     if configured:
-        return Path(configured).expanduser()
+        p = Path(configured).expanduser()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    candidates: list[Path] = []
     if sys.platform == "win32":
-        return Path(os.getenv("LOCALAPPDATA", Path.home())) / "BusDemandForecast"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "BusDemandForecast"
-    return Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "bus-demand-forecast"
+        candidates.append(Path(os.getenv("LOCALAPPDATA", Path.home())) / "BusDemandForecast")
+    elif sys.platform == "darwin":
+        candidates.append(Path.home() / "Library" / "Application Support" / "BusDemandForecast")
+    else:
+        candidates.append(Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "bus-demand-forecast")
+
+    workspace_data = project_path("data")
+    candidates.append(workspace_data)
+
+    for cand in candidates:
+        try:
+            cand.mkdir(parents=True, exist_ok=True)
+            test_file = cand / ".probe_write.tmp"
+            test_file.write_text("ok", encoding="utf-8")
+            test_file.unlink(missing_ok=True)
+            return cand
+        except OSError:
+            continue
+
+    workspace_data.mkdir(parents=True, exist_ok=True)
+    return workspace_data
 
 
 DATA_DIR = user_data_dir()
@@ -70,10 +105,22 @@ WEB_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    try:
+        init_db()
+    except Exception:
+        pass
+    yield
+
+
 app = FastAPI(
     title="Bus Passenger Demand Forecast",
     description="Daily route demand forecasting API and installable app.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 cors_origins = [item.strip() for item in os.getenv("BUS_FORECAST_CORS_ORIGINS", "").split(",") if item.strip()]
 if cors_origins:
@@ -172,6 +219,11 @@ def write_metadata(
     temporary = META_PATH.with_suffix(".tmp")
     temporary.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     temporary.replace(META_PATH)
+    try:
+        with get_db_session() as session:
+            repo_write_source_metadata(session, metadata, agency_id="default")
+    except Exception:
+        pass
 
 
 def record_audit_event(action: str, source_system: str, record_count: int, route_count: int) -> None:
@@ -185,6 +237,11 @@ def record_audit_event(action: str, source_system: str, record_count: int, route
     }
     with AUDIT_PATH.open("a", encoding="utf-8") as audit_file:
         audit_file.write(json.dumps(event, separators=(",", ":")) + "\n")
+    try:
+        with get_db_session() as session:
+            repo_record_audit_event(session, action, source_system, record_count, route_count, agency_id="default")
+    except Exception:
+        pass
 
 
 def read_recent_activity(limit: int = 12) -> list[dict]:
@@ -205,12 +262,18 @@ def read_recent_activity(limit: int = 12) -> list[dict]:
         return []
 
 
-def persist_daily_data(data: pd.DataFrame) -> None:
+def persist_daily_data(data: pd.DataFrame, source_system: str = "manual_csv") -> None:
     output = data[["service_date", "route_id", "passengers"]].copy()
     output["service_date"] = pd.to_datetime(output["service_date"]).dt.strftime("%Y-%m-%d")
     temporary = DATA_PATH.with_suffix(".uploading")
     output.to_csv(temporary, index=False)
     temporary.replace(DATA_PATH)
+    try:
+        with get_db_session() as session:
+            records = output.to_dict(orient="records")
+            replace_all_daily_counts(session, records, agency_id="default", source_system=source_system)
+    except Exception:
+        pass
 
 
 def api_safe(value):
@@ -279,6 +342,16 @@ def status_payload() -> dict:
             result["forecast_updated_at"] = pd.Timestamp(FORECAST_PATH.stat().st_mtime, unit="s", tz="UTC").isoformat()
         except (OSError, pd.errors.ParserError):
             pass
+
+    try:
+        result["db_health"] = check_db_health()
+    except Exception:
+        result["db_health"] = {"status": "unconfigured"}
+    try:
+        result["storage_health"] = check_storage_health()
+    except Exception:
+        result["storage_health"] = None
+
     return result
 
 
@@ -324,6 +397,42 @@ def persist_forecast(forecast: pd.DataFrame, mode: str) -> None:
 @app.get("/health", include_in_schema=False)
 def health() -> dict:
     return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/ready")
+@app.get("/ready", include_in_schema=False)
+def readiness() -> JSONResponse:
+    """Readiness probe checking database connectivity and storage health."""
+    db_h = check_db_health()
+    st_h = check_storage_health()
+    ready = db_h.get("connected", False) and st_h.get("writable", False)
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ready" if ready else "not_ready",
+            "database": db_h,
+            "storage": st_h,
+            "version": app.version,
+        },
+    )
+
+
+@app.get("/api/db/health", dependencies=[Depends(authorize)])
+def get_db_health() -> dict:
+    """Database connectivity and latency inspection."""
+    return check_db_health()
+
+
+@app.get("/api/storage/health", dependencies=[Depends(authorize)])
+def get_storage_health() -> dict:
+    """Storage directory, write permissions, and disk space."""
+    return check_storage_health()
+
+
+@app.get("/api/db/migrations", dependencies=[Depends(authorize)])
+def get_db_migrations() -> dict:
+    """Database migration status and table availability."""
+    return get_migration_status()
 
 
 @app.get("/api/status", dependencies=[Depends(authorize)])
@@ -385,6 +494,15 @@ def list_monthly_routes(
     except MonthlyStoreError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    if not records and os.getenv("DATABASE_URL"):
+        try:
+            with get_db_session() as session:
+                db_records = repo_get_monthly_observations(session, agency_id="cta")
+                if db_records:
+                    records = db_records
+        except Exception:
+            pass
+
     by_route: dict[str, list[dict]] = {}
     for record in records:
         by_route.setdefault(record["route_id"], []).append(record)
@@ -406,6 +524,7 @@ def get_monthly_route_history(route_id: str) -> dict:
     normalized_route_id = route_id.strip()
     if not normalized_route_id:
         raise HTTPException(status_code=422, detail="route_id must not be blank")
+
     try:
         records = [
             record for record in MonthlyRidershipStore(MONTHLY_DATA_PATH).observations()
@@ -413,6 +532,16 @@ def get_monthly_route_history(route_id: str) -> dict:
         ]
     except MonthlyStoreError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not records and os.getenv("DATABASE_URL"):
+        try:
+            with get_db_session() as session:
+                db_res = repo_get_monthly_route_history(session, normalized_route_id, agency_id="cta")
+                if db_res:
+                    return db_res
+        except Exception:
+            pass
+
     if not records:
         raise HTTPException(status_code=404, detail="No monthly history found for this route ID")
 
@@ -468,6 +597,13 @@ def upload_monthly_data(
         store = MonthlyRidershipStore(MONTHLY_DATA_PATH)
         imported = store.import_csv(contents, file.filename, source_info)
         status = store.status()
+        try:
+            with get_db_session() as session:
+                obs = store.observations()
+                repo_upsert_monthly_records(session, obs, agency_id="cta")
+                repo_record_monthly_import_event(session, imported, agency_id="cta")
+        except Exception:
+            pass
     except MonthlyDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MonthlyStoreError as exc:

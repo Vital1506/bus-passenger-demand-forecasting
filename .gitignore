@@ -8,3 +8,8 @@ build/
 *.spec
 .pytest_cache/
 .ruff_cache/
+*.db
+*.sqlite
+*.sqlite3
+data/backups/
+data/transit_intelligence.db

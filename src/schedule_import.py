@@ -34,7 +34,7 @@ def schedules_to_synthetic_counts(contents: bytes, days: int = 730, max_routes: 
         raise ValueError("No non-empty From/To route rows were found in the timetable.")
 
     route_counts = routes.groupby(["origin", "destination"], sort=True).size().sort_values(ascending=False).head(max_routes)
-    end = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.Timedelta(days=1)
+    end = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.to_timedelta(1, unit="D")
     dates = pd.date_range(end=end, periods=days, freq="D")
     rng = np.random.default_rng(7351)
     rows = []

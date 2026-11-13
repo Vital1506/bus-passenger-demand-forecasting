@@ -31,14 +31,14 @@ class ForecastingContractTests(unittest.TestCase):
 
     def test_lag_feature_uses_only_previous_observations(self):
         features = add_features(self.history)
-        row = features.loc[features["service_date"].eq(self.start + pd.Timedelta(days=29))].iloc[0]
+        row = features.loc[features["service_date"].eq(self.start + pd.to_timedelta(29, unit="D"))].iloc[0]
         self.assertEqual(row["lag_1"], 128)
         self.assertEqual(row["lag_7"], 122)
 
     def test_seasonal_naive_recurses_beyond_one_week(self):
         baseline = seasonal_naive_forecast(self.history, 10)
-        first = baseline.loc[baseline["service_date"].eq(self.start + pd.Timedelta(days=40)), "baseline"].iloc[0]
-        eighth = baseline.loc[baseline["service_date"].eq(self.start + pd.Timedelta(days=47)), "baseline"].iloc[0]
+        first = baseline.loc[baseline["service_date"].eq(self.start + pd.to_timedelta(40, unit="D")), "baseline"].iloc[0]
+        eighth = baseline.loc[baseline["service_date"].eq(self.start + pd.to_timedelta(47, unit="D")), "baseline"].iloc[0]
         self.assertEqual(first, eighth)
 
     def test_weekday_average_uses_matching_weekday_and_returns_range(self):

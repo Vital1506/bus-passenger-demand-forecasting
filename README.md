@@ -37,6 +37,19 @@ The web app now opens with a branded opening screen that waits for the forecast 
 
 The dashboard checks its API every 60 seconds while the page is open. Forecasts update after new records are ingested and the model/forecast is refreshed. A live ticketing or vehicle telemetry feed is **not connected by default**; configure an approved data integration and update schedule before treating the app as real-time operations software.
 
+## Database and persistence architecture
+
+The platform supports both zero-configuration local SQLite and production PostgreSQL managed through SQLAlchemy and Alembic.
+
+- **Development default:** local SQLite database at `data/transit_intelligence.db`
+- **Production configuration:** set `DATABASE_URL=postgresql://user:pass@host:5432/dbname`
+- **Readiness probe:** `/api/ready` checks database connectivity and storage health for container orchestrators (Render, Kubernetes)
+- **Monitoring endpoints:** `/api/db/health`, `/api/storage/health`, `/api/db/migrations`
+- **Alembic migrations:** run `alembic upgrade head`
+- **File-to-DB migration:** migrate legacy CSV/JSON files using `python -m src.db.migrate_files_to_db` (supports `--dry-run` and automatic backup)
+
+Detailed migration steps and database schema tables are documented in [MIGRATIONS.md](MIGRATIONS.md).
+
 ## Interface design
 
 The dashboard uses a persistent desktop navigation rail, compact mobile tabs, clear headings, carefully spaced forecast surfaces, responsive route tables, and visible keyboard focus. Its restrained teal and warm-neutral visual system uses color for status and emphasis without making color the only signal. The visual system is informed by [Material Design 3](https://m3.material.io/) and [Carbon's accessible data visualization palettes](https://carbondesignsystem.com/data-visualization/color-palettes/). Status labels accompany their colors, and sample data is clearly identified.
