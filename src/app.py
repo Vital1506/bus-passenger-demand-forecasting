@@ -42,6 +42,10 @@ from .gtfs_service import (
     list_routes as gtfs_list_routes,
     list_stops as gtfs_list_stops,
 )
+from .hybrid_forecasting import (
+    build_intraday_route_forecast,
+    build_network_intraday_curve,
+)
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
 from .realtime import get_realtime_service
@@ -1157,6 +1161,21 @@ def generate_realtime_demo_snapshot(agency_id: str = "CTA") -> dict[str, Any]:
         "notice": "All coordinates and delays in this snapshot are synthetic demonstration data.",
         "stats": stats,
     }
+
+
+@app.get("/api/forecast/realtime/{route_id}")
+def get_route_realtime_forecast(
+    route_id: str,
+    baseline_passengers: float | None = None,
+) -> dict[str, Any]:
+    base_val = float(baseline_passengers) if baseline_passengers is not None else 2500.0
+    forecast = build_intraday_route_forecast(route_id=route_id, daily_baseline_passengers=base_val)
+    return forecast.to_dict()
+
+
+@app.get("/api/forecast/intraday")
+def get_intraday_network_curve() -> dict[str, Any]:
+    return build_network_intraday_curve()
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
