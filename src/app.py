@@ -32,6 +32,7 @@ from .db import (
     upsert_monthly_records as repo_upsert_monthly_records,
     write_source_metadata as repo_write_source_metadata,
 )
+from .data_quality import get_quality_monitor
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
 from .gtfs_importer import GTFSValidationError, import_gtfs_feed
@@ -1216,6 +1217,38 @@ def get_operations_metrics(agency_id: str | None = None) -> dict[str, Any]:
     engine = get_operations_engine()
     _, _, metrics = engine.evaluate_fleet(agency_id=agency_id)
     return metrics.to_dict()
+
+
+@app.get("/api/quality/drift-status")
+def get_quality_drift_status() -> dict[str, Any]:
+    monitor = get_quality_monitor()
+    df = None
+    if DATA_PATH.exists():
+        try:
+            df = load_data(str(DATA_PATH))
+        except Exception:
+            pass
+    rep = monitor.assess_drift(df)
+    return rep.to_dict()
+
+
+@app.get("/api/quality/audit-logs", dependencies=[Depends(authorize)])
+def get_quality_audit_logs(limit: int = 50) -> list[dict[str, Any]]:
+    monitor = get_quality_monitor()
+    return monitor.get_audit_logs(limit=limit)
+
+
+@app.post("/api/quality/check-drift", dependencies=[Depends(authorize)])
+def check_quality_drift() -> dict[str, Any]:
+    monitor = get_quality_monitor()
+    df = None
+    if DATA_PATH.exists():
+        try:
+            df = load_data(str(DATA_PATH))
+        except Exception:
+            pass
+    rep = monitor.assess_drift(df)
+    return rep.to_dict()
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
