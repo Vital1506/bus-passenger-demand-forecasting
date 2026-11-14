@@ -1237,14 +1237,25 @@ async function refreshStatus() {
 }
 async function waitForServer() {
   const deadline = Date.now() + 60000;
-  const delays = [1000, 2000, 4000, 8000];
+  const delays = [800, 1500, 3000, 5000];
   let attempt = 0;
   while (Date.now() < deadline) {
-    try { await api("/health"); return; }
-    catch (_) {
+    try {
+      await api("/health");
+      try {
+        const ready = await api("/api/ready");
+        if (ready && ready.status === "ready") return;
+      } catch (_) {}
+      return;
+    } catch (_) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
-      setSplashStatus("Waking up the server (up to 60s)…");
+      const elapsed = Math.round((Date.now() - state.openingStartedAt) / 1000);
+      if (elapsed > 4) {
+        setSplashStatus(`Waking up cloud server (${elapsed}s elapsed, cold start can take up to 60s)…`);
+      } else {
+        setSplashStatus("Connecting to transit forecast service…");
+      }
       await new Promise((resolve) => window.setTimeout(resolve, Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)));
     }
   }

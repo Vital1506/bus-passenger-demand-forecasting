@@ -12,7 +12,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
-COPY data/sample_daily_ridership.csv ./data/sample_daily_ridership.csv
+COPY data ./data
 COPY web ./web
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

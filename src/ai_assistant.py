@@ -146,6 +146,7 @@ def extract_system_context(
     candidate_metrics = [
         data_dir / "metrics.json",
         data_dir / "artifacts" / "metrics.json",
+        data_dir / "artifacts" / "backtest_metrics.json",
     ]
     for metrics_path in candidate_metrics:
         if metrics_path.exists():
