@@ -1,0 +1,284 @@
+{
+  "model_selection": {
+    "by_lead_day": {
+      "1": {
+        "mae": 57.15117562889814,
+        "rmse": 67.40516183750108,
+        "wape": 0.1152435065613809
+      },
+      "2": {
+        "mae": 51.930894678267215,
+        "rmse": 62.69026406475752,
+        "wape": 0.10450624453114316
+      },
+      "3": {
+        "mae": 57.20027802178007,
+        "rmse": 71.30411931275644,
+        "wape": 0.11972847309634761
+      },
+      "4": {
+        "mae": 50.41508516467466,
+        "rmse": 61.98940338752168,
+        "wape": 0.10488575276978085
+      },
+      "5": {
+        "mae": 36.84695803477191,
+        "rmse": 47.107877033759905,
+        "wape": 0.07707224968054086
+      },
+      "6": {
+        "mae": 40.15640381016726,
+        "rmse": 48.823339585883645,
+        "wape": 0.15356177365264728
+      },
+      "7": {
+        "mae": 34.98217851352836,
+        "rmse": 40.00076646246443,
+        "wape": 0.12751705411978745
+      }
+    },
+    "largest_absolute_errors": [
+      {
+        "service_date": "2026-10-07",
+        "route_id": "R10",
+        "passengers": 561,
+        "predicted_passengers": 741.6600286237356,
+        "baseline": 724.0,
+        "absolute_error": 180.66002862373557,
+        "lead_day": 3,
+        "fold": 4
+      },
+      {
+        "service_date": "2026-10-06",
+        "route_id": "R10",
+        "passengers": 589,
+        "predicted_passengers": 731.488730645206,
+        "baseline": 813.0,
+        "absolute_error": 142.48873064520603,
+        "lead_day": 2,
+        "fold": 4
+      },
+      {
+        "service_date": "2026-10-08",
+        "route_id": "R10",
+        "passengers": 579,
+        "predicted_passengers": 703.2656449034129,
+        "baseline": 815.0,
+        "absolute_error": 124.26564490341286,
+        "lead_day": 4,
+        "fold": 4
+      },
+      {
+        "service_date": "2026-09-24",
+        "route_id": "R22",
+        "passengers": 368,
+        "predicted_passengers": 475.9810895506638,
+        "baseline": 522.0,
+        "absolute_error": 107.9810895506638,
+        "lead_day": 4,
+        "fold": 2
+      },
+      {
+        "service_date": "2026-09-25",
+        "route_id": "R10",
+        "passengers": 622,
+        "predicted_passengers": 729.8167996991699,
+        "baseline": 743.0,
+        "absolute_error": 107.8167996991699,
+        "lead_day": 5,
+        "fold": 2
+      },
+      {
+        "service_date": "2026-09-21",
+        "route_id": "R22",
+        "passengers": 375,
+        "predicted_passengers": 474.81339290385824,
+        "baseline": 513.0,
+        "absolute_error": 99.81339290385824,
+        "lead_day": 1,
+        "fold": 2
+      },
+      {
+        "service_date": "2026-09-28",
+        "route_id": "R10",
+        "passengers": 633,
+        "predicted_passengers": 730.6927592343316,
+        "baseline": 682.0,
+        "absolute_error": 97.69275923433156,
+        "lead_day": 1,
+        "fold": 3
+      },
+      {
+        "service_date": "2026-09-28",
+        "route_id": "R22",
+        "passengers": 368,
+        "predicted_passengers": 465.34535439785765,
+        "baseline": 375.0,
+        "absolute_error": 97.34535439785765,
+        "lead_day": 1,
+        "fold": 3
+      },
+      {
+        "service_date": "2026-09-29",
+        "route_id": "R22",
+        "passengers": 388,
+        "predicted_passengers": 485.1426594224402,
+        "baseline": 428.0,
+        "absolute_error": 97.1426594224402,
+        "lead_day": 2,
+        "fold": 3
+      },
+      {
+        "service_date": "2026-10-03",
+        "route_id": "R10",
+        "passengers": 461,
+        "predicted_passengers": 365.81671976027974,
+        "baseline": 406.0,
+        "absolute_error": 95.18328023972026,
+        "lead_day": 6,
+        "fold": 3
+      }
+    ]
+  },
+  "final_holdout": {
+    "by_lead_day": {
+      "1": {
+        "mae": 56.24300346497265,
+        "rmse": 69.1257988806051,
+        "wape": 0.10859469695569941
+      },
+      "2": {
+        "mae": 49.75874169568517,
+        "rmse": 54.72035676100301,
+        "wape": 0.09963372273456066
+      },
+      "3": {
+        "mae": 74.35803569057427,
+        "rmse": 89.5852707647385,
+        "wape": 0.1468800704998998
+      },
+      "4": {
+        "mae": 50.48907844176477,
+        "rmse": 59.950096659463135,
+        "wape": 0.10717653304460945
+      },
+      "5": {
+        "mae": 53.494336807723464,
+        "rmse": 66.48755866772265,
+        "wape": 0.10887585510391477
+      },
+      "6": {
+        "mae": 25.38983057536321,
+        "rmse": 30.750243353363672,
+        "wape": 0.0924948290541465
+      },
+      "7": {
+        "mae": 30.604214775056963,
+        "rmse": 35.66556926324307,
+        "wape": 0.11061764376526613
+      }
+    },
+    "largest_absolute_errors": [
+      {
+        "service_date": "2026-10-14",
+        "route_id": "R10",
+        "passengers": 834,
+        "predicted_passengers": 653.6190249505072,
+        "baseline": 561.0,
+        "absolute_error": 180.3809750494928,
+        "lead_day": 3,
+        "holdout_block": 1
+      },
+      {
+        "service_date": "2026-10-28",
+        "route_id": "R10",
+        "passengers": 831,
+        "predicted_passengers": 665.8877062203029,
+        "baseline": 580.0,
+        "absolute_error": 165.1122937796971,
+        "lead_day": 3,
+        "holdout_block": 3
+      },
+      {
+        "service_date": "2026-10-12",
+        "route_id": "R10",
+        "passengers": 767,
+        "predicted_passengers": 631.6141652963042,
+        "baseline": 831.0,
+        "absolute_error": 135.38583470369576,
+        "lead_day": 1,
+        "holdout_block": 1
+      },
+      {
+        "service_date": "2026-10-19",
+        "route_id": "R10",
+        "passengers": 590,
+        "predicted_passengers": 701.9079540681637,
+        "baseline": 767.0,
+        "absolute_error": 111.90795406816369,
+        "lead_day": 1,
+        "holdout_block": 2
+      },
+      {
+        "service_date": "2026-11-05",
+        "route_id": "R10",
+        "passengers": 611,
+        "predicted_passengers": 722.1477605961176,
+        "baseline": 742.0,
+        "absolute_error": 111.14776059611756,
+        "lead_day": 4,
+        "holdout_block": 4
+      },
+      {
+        "service_date": "2026-11-06",
+        "route_id": "R10",
+        "passengers": 646,
+        "predicted_passengers": 756.6799319866524,
+        "baseline": 631.0,
+        "absolute_error": 110.67993198665238,
+        "lead_day": 5,
+        "holdout_block": 4
+      },
+      {
+        "service_date": "2026-10-30",
+        "route_id": "R22",
+        "passengers": 375,
+        "predicted_passengers": 485.1468031136373,
+        "baseline": 448.0,
+        "absolute_error": 110.1468031136373,
+        "lead_day": 5,
+        "holdout_block": 3
+      },
+      {
+        "service_date": "2026-10-22",
+        "route_id": "R10",
+        "passengers": 650,
+        "predicted_passengers": 748.1869228138885,
+        "baseline": 635.0,
+        "absolute_error": 98.18692281388849,
+        "lead_day": 4,
+        "holdout_block": 2
+      },
+      {
+        "service_date": "2026-10-21",
+        "route_id": "R10",
+        "passengers": 580,
+        "predicted_passengers": 677.1844379001583,
+        "baseline": 834.0,
+        "absolute_error": 97.18443790015829,
+        "lead_day": 3,
+        "holdout_block": 2
+      },
+      {
+        "service_date": "2026-11-02",
+        "route_id": "R10",
+        "passengers": 789,
+        "predicted_passengers": 691.8216117153452,
+        "baseline": 743.0,
+        "absolute_error": 97.17838828465483,
+        "lead_day": 1,
+        "holdout_block": 4
+      }
+    ]
+  }
+}

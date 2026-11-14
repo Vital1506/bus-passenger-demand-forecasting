@@ -134,13 +134,146 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 from contextlib import asynccontextmanager
+import logging
+import shutil
+
+logger = logging.getLogger("bus_demand_app")
+
+
+def ensure_system_initialized() -> None:
+    """Bootstrap demo dataset, trained model, and forecast cache on application startup.
+
+    Guarantees:
+    1. If DATA_DIR does not have daily_ridership.csv, imports and dynamically aligns
+       the bundled sample_daily_ridership.csv (2,190 records, 3 routes: R10, R22, R35).
+    2. If ARTIFACT_DIR does not have model.joblib, copies the bundled pre-trained model
+       or trains once reliably, persisting artifacts so requests never retrain synchronously.
+    3. Generates 7-day forecast into DATA_DIR / forecast.csv and in-memory PUBLIC_DEMO_CACHE.
+    4. Ensures /api/status, /api/public-demo/status, /api/ready, and AI Copilot have instant access
+       to verified real/synthetic telemetry on cold start without 30-second delays.
+    """
+    global PUBLIC_DEMO_CACHE
+    sample_csv = project_path("data/sample_daily_ridership.csv")
+    bundled_model_dir = project_path("data/bundled_model")
+    bundled_artifacts_dir = project_path("data/artifacts")
+
+    # 1. Initialize Database
+    try:
+        init_db()
+    except Exception as exc:
+        logger.warning("Database initialization deferred/failed: %s", exc)
+
+    # 2. Bootstrap Dataset in DATA_DIR
+    if not DATA_PATH.exists() and sample_csv.exists():
+        try:
+            raw_data = load_data(str(sample_csv))
+            required_cols = {"service_date", "route_id", "passengers"}
+            if required_cols.issubset(raw_data.columns) and not raw_data.empty:
+                original_dates = pd.DatetimeIndex(sorted(raw_data["service_date"].unique()))
+                last_observed_date = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.DateOffset(days=1)
+                shifted_dates = pd.date_range(end=last_observed_date, periods=len(original_dates), freq="D")
+                date_map = dict(zip(original_dates, shifted_dates))
+                raw_data["service_date"] = raw_data["service_date"].map(date_map)
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+                raw_data.to_csv(DATA_PATH, index=False)
+                META_PATH.write_text(
+                    json.dumps({
+                        "source": "synthetic demo data",
+                        "source_system": "bundled_sample",
+                        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    }),
+                    encoding="utf-8",
+                )
+                logger.info("Initialized DATA_PATH from sample dataset: %d records, %d routes.", len(raw_data), raw_data["route_id"].nunique())
+        except Exception as exc:
+            logger.error("Failed to bootstrap sample dataset: %s", exc)
+
+    # 3. Bootstrap Model Artifacts in ARTIFACT_DIR
+    if not MODEL_PATH.exists():
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        candidate_model = None
+        candidate_metrics = None
+        for cand_dir in [bundled_model_dir, bundled_artifacts_dir]:
+            m = cand_dir / "model.joblib"
+            met = cand_dir / "metrics.json"
+            if m.exists():
+                candidate_model = m
+                if met.exists():
+                    candidate_metrics = met
+                break
+
+        if candidate_model:
+            try:
+                shutil.copy2(candidate_model, MODEL_PATH)
+                if candidate_metrics:
+                    shutil.copy2(candidate_metrics, METRICS_PATH)
+                logger.info("Bootstrapped pre-trained model bundle from %s", candidate_model)
+            except Exception as exc:
+                logger.warning("Could not copy bundled model: %s", exc)
+
+        if not MODEL_PATH.exists() and DATA_PATH.exists():
+            try:
+                logger.info("Training initial demo model...")
+                train_project(
+                    data_path=DATA_PATH,
+                    model_out=MODEL_PATH,
+                    horizon=7,
+                    folds=4,
+                    metrics_out=METRICS_PATH,
+                    predictions_out=PREDICTIONS_PATH,
+                    holdout_predictions_out=HOLDOUT_PREDICTIONS_PATH,
+                )
+                logger.info("Demo model training finished.")
+            except Exception as exc:
+                logger.error("Failed to train demo model: %s", exc)
+
+    # 4. Generate & Cache 7-Day Forecast
+    if DATA_PATH.exists() and MODEL_PATH.exists():
+        try:
+            forecasts = build_forecast(DATA_PATH, MODEL_PATH, days=7, missing_days="error")
+            forecasts.to_csv(FORECAST_PATH, index=False)
+            FORECAST_META_PATH.write_text(
+                json.dumps({
+                    "mode": "machine_learning",
+                    "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "horizon_days": 7,
+                }),
+                encoding="utf-8",
+            )
+            data = load_data(str(DATA_PATH))
+            metrics_dict = {}
+            if METRICS_PATH.exists():
+                try:
+                    metrics_dict = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+
+            PUBLIC_DEMO_ARTIFACTS.update({"data": DATA_PATH, "model": MODEL_PATH})
+            PUBLIC_DEMO_CACHE = {
+                "data_loaded": True,
+                "source": "synthetic demo data",
+                "rows": int(len(data)),
+                "route_count": int(data["route_id"].nunique()),
+                "latest_observed_date": data["service_date"].max().date().isoformat(),
+                "model_trained": True,
+                "trained_through": data["service_date"].max().date().isoformat(),
+                "horizon_days": 7,
+                "metrics": metrics_dict,
+                "forecasts": forecasts.to_dict(orient="records"),
+                "forecast_updated_at": datetime.now(timezone.utc).isoformat(),
+                "public_demo": True,
+            }
+            logger.info("Initialized PUBLIC_DEMO_CACHE: %d forecast rows for routes %s.", len(forecasts), sorted(data["route_id"].unique().tolist()))
+        except Exception as exc:
+            logger.error("Failed to generate initial forecast: %s", exc)
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     try:
-        init_db()
-    except Exception:
-        pass
+        ensure_system_initialized()
+    except Exception as exc:
+        logger.error("Lifespan startup bootstrap error: %s", exc)
     yield
 
 
@@ -434,6 +567,20 @@ def status_payload() -> dict:
         except (OSError, pd.errors.ParserError):
             pass
 
+    if not result["data_loaded"] and PUBLIC_DEMO_CACHE and PUBLIC_DEMO_CACHE.get("data_loaded"):
+        result["data_loaded"] = True
+        result["source"] = PUBLIC_DEMO_CACHE.get("source", "synthetic demo data")
+        result["rows"] = PUBLIC_DEMO_CACHE.get("rows", 0)
+        result["route_count"] = PUBLIC_DEMO_CACHE.get("route_count", 0)
+        result["latest_observed_date"] = PUBLIC_DEMO_CACHE.get("latest_observed_date")
+        result["model_trained"] = PUBLIC_DEMO_CACHE.get("model_trained", False)
+        result["trained_through"] = PUBLIC_DEMO_CACHE.get("trained_through")
+        result["horizon_days"] = PUBLIC_DEMO_CACHE.get("horizon_days")
+        result["metrics"] = PUBLIC_DEMO_CACHE.get("metrics")
+        result["forecasts"] = PUBLIC_DEMO_CACHE.get("forecasts", [])
+        result["forecast_mode"] = "machine_learning"
+        result["forecast_updated_at"] = PUBLIC_DEMO_CACHE.get("forecast_updated_at")
+
     try:
         result["db_health"] = check_db_health()
     except Exception:
@@ -493,16 +640,24 @@ def health() -> dict:
 @app.get("/api/ready")
 @app.get("/ready", include_in_schema=False)
 def readiness() -> JSONResponse:
-    """Readiness probe checking database connectivity and storage health."""
+    """Readiness probe checking database connectivity, storage, and initialized forecast services."""
     db_h = check_db_health()
     st_h = check_storage_health()
-    ready = db_h.get("connected", False) and st_h.get("writable", False)
+    data_ready = DATA_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("data_loaded")))
+    model_ready = MODEL_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("model_trained")))
+    forecast_ready = FORECAST_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("forecasts")))
+    routes_count = PUBLIC_DEMO_CACHE.get("route_count", 0) if PUBLIC_DEMO_CACHE else 0
+    ready = db_h.get("connected", False) and st_h.get("writable", False) and data_ready and model_ready
     return JSONResponse(
         status_code=200 if ready else 503,
         content={
             "status": "ready" if ready else "not_ready",
             "database": db_h,
             "storage": st_h,
+            "data_loaded": bool(data_ready),
+            "model_ready": bool(model_ready),
+            "forecasts_ready": bool(forecast_ready),
+            "routes_available": routes_count,
             "version": app.version,
         },
     )
@@ -717,52 +872,10 @@ def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
     with PUBLIC_DEMO_LOCK:
         if PUBLIC_DEMO_CACHE is not None:
             return public_demo_forecast_for_days(days)
-        sample = project_path("data/sample_daily_ridership.csv")
-        if not sample.exists():
-            raise HTTPException(status_code=500, detail="The bundled synthetic dataset is missing")
-        demo_dir = Path(tempfile.mkdtemp(prefix="bus-forecast-public-demo-"))
-        demo_data_path = demo_dir / "daily_ridership.csv"
-        model_path = demo_dir / "model.joblib"
-        metrics_path = demo_dir / "metrics.json"
-        predictions_path = demo_dir / "predictions.csv"
-        holdout_path = demo_dir / "holdout_predictions.csv"
-        try:
-            data = load_data(str(sample))
-            original_dates = pd.DatetimeIndex(sorted(data["service_date"].unique()))
-            last_observed_date = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.Timedelta(days=1)
-            shifted_dates = pd.date_range(end=last_observed_date, periods=len(original_dates), freq="D")
-            date_map = dict(zip(original_dates, shifted_dates))
-            data["service_date"] = data["service_date"].map(date_map)
-            data.to_csv(demo_data_path, index=False)
-            training = train_project(
-                data_path=demo_data_path,
-                model_out=model_path,
-                horizon=7,
-                folds=4,
-                metrics_out=metrics_path,
-                predictions_out=predictions_path,
-                holdout_predictions_out=holdout_path,
-            )
-            data = load_data(str(demo_data_path))
-            forecasts = build_forecast(demo_data_path, model_path, 7, "error")
-            PUBLIC_DEMO_ARTIFACTS.update({"data": demo_data_path, "model": model_path})
-            PUBLIC_DEMO_CACHE = {
-                "data_loaded": True,
-                "source": "synthetic demo data",
-                "rows": int(len(data)),
-                "route_count": int(data["route_id"].nunique()),
-                "latest_observed_date": data["service_date"].max().date().isoformat(),
-                "model_trained": True,
-                "trained_through": training["trained_through"],
-                "horizon_days": 7,
-                "metrics": json.loads(metrics_path.read_text(encoding="utf-8")),
-                "forecasts": forecasts.to_dict(orient="records"),
-                "forecast_updated_at": training["created_at_utc"],
-                "public_demo": True,
-            }
-        except (OSError, ValueError) as exc:
-            raise HTTPException(status_code=500, detail="Could not build the synthetic public preview") from exc
-    return public_demo_forecast_for_days(days)
+        ensure_system_initialized()
+        if PUBLIC_DEMO_CACHE is not None:
+            return public_demo_forecast_for_days(days)
+        raise HTTPException(status_code=500, detail="Could not initialize public demo forecast")
 
 
 def public_demo_forecast_for_days(days: int) -> dict:
@@ -773,10 +886,15 @@ def public_demo_forecast_for_days(days: int) -> dict:
         raise HTTPException(status_code=503, detail="The synthetic demo model is not ready")
     if days == PUBLIC_DEMO_CACHE["horizon_days"]:
         return PUBLIC_DEMO_CACHE
-    data_path = PUBLIC_DEMO_ARTIFACTS.get("data")
-    model_path = PUBLIC_DEMO_ARTIFACTS.get("model")
-    if data_path is None or model_path is None:
+    data_path = PUBLIC_DEMO_ARTIFACTS.get("data") or DATA_PATH
+    model_path = PUBLIC_DEMO_ARTIFACTS.get("model") or MODEL_PATH
+    if not data_path.exists() or not model_path.exists():
         raise HTTPException(status_code=503, detail="The synthetic demo model is not ready")
+    try:
+        forecast = build_forecast(data_path, model_path, days, "error")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Could not generate the synthetic forecast horizon") from exc
+    return {**PUBLIC_DEMO_CACHE, "horizon_days": days, "forecasts": forecast.to_dict(orient="records")}
     try:
         forecast = build_forecast(data_path, model_path, days, "error")
     except (OSError, ValueError) as exc:
