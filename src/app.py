@@ -647,7 +647,7 @@ def readiness() -> JSONResponse:
     model_ready = MODEL_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("model_trained")))
     forecast_ready = FORECAST_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("forecasts")))
     routes_count = PUBLIC_DEMO_CACHE.get("route_count", 0) if PUBLIC_DEMO_CACHE else 0
-    ready = db_h.get("connected", False) and st_h.get("writable", False) and data_ready and model_ready
+    ready = db_h.get("connected", False) and st_h.get("writable", False) and data_ready and model_ready and forecast_ready
     return JSONResponse(
         status_code=200 if ready else 503,
         content={
