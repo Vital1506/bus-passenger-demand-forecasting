@@ -42,6 +42,18 @@ def test_compute_metrics():
     assert round(res["wape"], 4) == round(30.0 / 600.0, 4)
 
 
+def test_benchmark_rejects_unknown_candidate_models():
+    data = load_data("data/sample_daily_ridership.csv")
+    with pytest.raises(ValueError, match="Unsupported candidate model"):
+        run_multi_model_benchmark(data, horizon=7, folds=1, candidate_models=["not-a-real-model"])
+
+
+def test_benchmark_rejects_missing_daily_observations():
+    data = load_data("data/sample_daily_ridership.csv").drop(index=10).reset_index(drop=True)
+    with pytest.raises(ValueError, match="Missing route/date observations"):
+        run_multi_model_benchmark(data, horizon=7, folds=1, candidate_models=[])
+
+
 def test_multi_model_benchmark_execution():
     data = load_data("data/sample_daily_ridership.csv")
     res = run_multi_model_benchmark(

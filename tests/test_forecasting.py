@@ -2,9 +2,14 @@
 
 import unittest
 
+import joblib
+from unittest.mock import patch
+
 import pandas as pd
 
-from src.forecasting import add_features, complete_daily_series, load_data
+from src.forecast import build_forecast
+from src.forecasting import add_features, complete_daily_series, load_data, wape
+from src.train import select_forecast_strategy, train_project
 from src.modeling import seasonal_naive_forecast, weekday_average_forecast
 from src.schedule_import import schedules_to_synthetic_counts
 
@@ -56,6 +61,41 @@ class ForecastingContractTests(unittest.TestCase):
             weekday_average_forecast(self.history.iloc[:27], 7)
 
 
+    def test_wape_returns_zero_for_perfect_zero_demand_predictions(self):
+        self.assertEqual(wape(pd.Series([0, 0]).to_numpy(), pd.Series([0, 0]).to_numpy()), 0.0)
+
+    def test_wape_rejects_nonzero_predictions_when_actual_total_is_zero(self):
+        with self.assertRaisesRegex(ValueError, "WAPE is undefined"):
+            wape(pd.Series([0, 0]).to_numpy(), pd.Series([1, 0]).to_numpy())
+
+    def test_forecast_strategy_promotes_ml_only_when_it_beats_baseline(self):
+        self.assertEqual(select_forecast_strategy({"wape": 0.10}, {"wape": 0.12}), "machine_learning")
+        self.assertEqual(select_forecast_strategy({"wape": 0.12}, {"wape": 0.12}), "seasonal_naive")
+        self.assertEqual(select_forecast_strategy({"wape": 0.14}, {"wape": 0.12}), "seasonal_naive")
+
+    def test_build_forecast_uses_selected_seasonal_naive_strategy(self):
+        data_path = "data/sample_daily_ridership.csv"
+        history = complete_daily_series(load_data(data_path))
+        bundle = {
+            "horizon": 7,
+            "trained_through": history["service_date"].max().date().isoformat(),
+            "routes": sorted(history["route_id"].astype(str).unique()),
+            "forecast_strategy": "seasonal_naive",
+            "route_error_band_90": {},
+            "global_error_band_90": 25.0,
+            "model": None,
+        }
+        with patch("src.forecast.joblib.load", return_value=bundle):
+            forecast = build_forecast(data_path, "unused-model.joblib", days=7)
+
+        expected = seasonal_naive_forecast(history, 7)
+        pd.testing.assert_series_equal(
+            forecast["predicted_passengers"],
+            expected["baseline"].round(2),
+            check_names=False,
+        )
+        self.assertTrue((forecast["upper_90_approx"] >= forecast["predicted_passengers"]).all())
+
     def test_timetable_import_creates_a_labelled_synthetic_route_panel(self):
         timetable = b"From,To,Operator,Departure\nA,B,Transit Co,08:00\nA,B,Transit Co,09:00\nB,C,Transit Co,10:00\n"
         result = schedules_to_synthetic_counts(timetable, days=60)
@@ -68,6 +108,33 @@ class ForecastingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "From and To"):
             schedules_to_synthetic_counts(b"Operator,Distance\nTransit Co,50\n", days=60)
 
+
+
+
+def test_training_pipeline_saves_strategy_and_produces_forecasts(tmp_path):
+    data_path = "data/sample_daily_ridership.csv"
+    model_path = tmp_path / "model.joblib"
+    result = train_project(
+        data_path=data_path,
+        model_out=model_path,
+        horizon=7,
+        folds=1,
+        metrics_out=tmp_path / "metrics.json",
+        predictions_out=tmp_path / "backtest.csv",
+        holdout_days=14,
+        holdout_predictions_out=tmp_path / "holdout.csv",
+    )
+
+    bundle = joblib.load(model_path)
+    assert result["forecast_strategy"] in {"machine_learning", "seasonal_naive"}
+    assert bundle["forecast_strategy"] == result["forecast_strategy"]
+
+    forecast = build_forecast(data_path, model_path, days=7)
+    assert len(forecast) == len(bundle["routes"]) * 7
+    assert forecast["predicted_passengers"].notna().all()
+    assert (forecast["predicted_passengers"] >= 0).all()
+    assert (forecast["lower_90_approx"] <= forecast["predicted_passengers"]).all()
+    assert (forecast["upper_90_approx"] >= forecast["predicted_passengers"]).all()
 
 if __name__ == "__main__":
     unittest.main()

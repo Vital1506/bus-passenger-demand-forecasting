@@ -26,6 +26,17 @@ def metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
     }
 
 
+def select_forecast_strategy(
+    model_scores: dict[str, float], baseline_scores: dict[str, float]
+) -> str:
+    """Promote ML only when it beats seasonal naive on rolling-origin WAPE."""
+    model_wape = float(model_scores["wape"])
+    baseline_wape = float(baseline_scores["wape"])
+    if not np.isfinite(model_wape) or not np.isfinite(baseline_wape):
+        return "seasonal_naive"
+    return "machine_learning" if model_wape < baseline_wape else "seasonal_naive"
+
+
 def rolling_backtest(data: pd.DataFrame, horizon: int, folds: int) -> tuple[pd.DataFrame, dict[str, float], dict[str, float]]:
     dates = pd.DatetimeIndex(sorted(data["service_date"].unique()))
     needed = max(90, 29 + horizon * folds)
@@ -181,8 +192,10 @@ def train_project(
     print(f"Rolling-origin model-selection backtest: {folds} folds × {horizon} days")
     for label, score in (("ML model", model_scores), ("Seasonal-naive baseline", baseline_scores)):
         print(f"{label}: MAE={score['mae']:.2f} RMSE={score['rmse']:.2f} WAPE={score['wape']:.2%}")
-    if model_scores["wape"] > baseline_scores["wape"]:
-        print("WARNING: ML model underperformed the seasonal-naive baseline on WAPE; inspect route-level metrics before deployment.")
+    forecast_strategy = select_forecast_strategy(model_scores, baseline_scores)
+    print(f"Selected forecast strategy using rolling-origin WAPE: {forecast_strategy}")
+    if forecast_strategy == "seasonal_naive":
+        print("ML model was not promoted because it did not beat the seasonal-naive baseline.")
 
     by_route = route_metrics(backtest)
     holdout_by_route = route_metrics(holdout)
@@ -225,10 +238,14 @@ def train_project(
         "final_holdout": error_analysis(holdout),
     }, indent=2), encoding="utf-8")
 
-    errors = (backtest["passengers"] - backtest["predicted_passengers"]).abs()
-    global_band = float(errors.quantile(0.90))
+    if forecast_strategy == "machine_learning":
+        selected_residuals = backtest["passengers"] - backtest["predicted_passengers"]
+    else:
+        selected_residuals = backtest["passengers"] - backtest["baseline"]
+    absolute_errors = selected_residuals.abs()
+    global_band = float(absolute_errors.quantile(0.90))
     route_bands = {}
-    for route, group in backtest.assign(abs_error=errors).groupby("route_id"):
+    for route, group in backtest.assign(abs_error=absolute_errors).groupby("route_id"):
         route_bands[str(route)] = float(group["abs_error"].quantile(0.90))
 
     supervised = add_features(data).dropna(subset=FEATURE_COLUMNS)
@@ -238,11 +255,12 @@ def train_project(
         "features": FEATURE_COLUMNS,
         "routes": sorted(data["route_id"].astype(str).unique()),
         "horizon": horizon,
-        "model_version": "0.3.0",
+        "model_version": "0.4.0",
+        "forecast_strategy": forecast_strategy,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "data_sha256": hashlib.sha256(Path(data_path).read_bytes()).hexdigest(),
         "package_versions": {"pandas": pd.__version__, "scikit_learn": sklearn.__version__, "joblib": joblib.__version__},
-        "interval_method": "rolling-origin 90th percentile absolute residual; symmetric and approximate",
+        "interval_method": "rolling-origin 90th percentile absolute residual for the selected forecast strategy; symmetric and approximate",
         "global_error_band_90": global_band,
         "route_error_band_90": route_bands,
         "backtest_model_metrics": model_scores,
@@ -272,6 +290,7 @@ def train_project(
         "final_holdout_baseline_metrics": holdout_baseline_scores,
         "final_holdout_days": holdout_days,
         "model_version": bundle["model_version"],
+        "forecast_strategy": bundle["forecast_strategy"],
         "created_at_utc": bundle["created_at_utc"],
     }
 

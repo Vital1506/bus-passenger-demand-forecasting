@@ -12,7 +12,7 @@ async function api(path, options = {}) {
   if (accessKey()) headers.set("Authorization", `Bearer ${accessKey()}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 9000 : 90000);
+  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 25000 : 90000);
   try {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
@@ -1211,7 +1211,7 @@ async function refreshStatus() {
         setConnection(true);
         connected = true;
       } catch (error) {
-        if (!error.message.includes("access key")) throw error;
+        console.warn("Operator endpoint unavailable, falling back to public demo:", error.message);
       }
     }
     if (!connected) {
@@ -1239,27 +1239,35 @@ async function waitForServer() {
   const deadline = Date.now() + 60000;
   const delays = [800, 1500, 3000, 5000];
   let attempt = 0;
+  let lastError = null;
+
   while (Date.now() < deadline) {
     try {
       await api("/health");
-      try {
-        const ready = await api("/api/ready");
-        if (ready && ready.status === "ready") return;
-      } catch (_) {}
-      return;
-    } catch (_) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      const elapsed = Math.round((Date.now() - state.openingStartedAt) / 1000);
-      if (elapsed > 4) {
-        setSplashStatus(`Waking up cloud server (${elapsed}s elapsed, cold start can take up to 60s)…`);
-      } else {
-        setSplashStatus("Connecting to transit forecast service…");
+      const ready = await api("/api/ready");
+      if (ready && ready.status === "ready" && ready.forecasts_ready === true) {
+        return;
       }
-      await new Promise((resolve) => window.setTimeout(resolve, Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)));
+      lastError = new Error("Forecast service is still initializing");
+    } catch (error) {
+      lastError = error;
     }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const elapsed = Math.round((Date.now() - state.openingStartedAt) / 1000);
+    if (elapsed > 4) {
+      setSplashStatus(`Waking up cloud server (${elapsed}s elapsed, waiting for forecast readiness)…`);
+    } else {
+      setSplashStatus("Connecting to transit forecast service…");
+    }
+    await new Promise((resolve) => window.setTimeout(
+      resolve,
+      Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)
+    ));
   }
-  throw new Error("Server wake-up timed out");
+
+  throw new Error(lastError?.message || "Server wake-up timed out");
 }
 async function withBusy(label, operation) {
   if (state.busy) return;
@@ -1579,6 +1587,8 @@ function setupAiAssistant() {
         msg = "Authentication required: If you are an operator, click Settings (⚙️) and enter your API access key.";
       } else if (err.status === 503 && (msg.includes("OpenRouter") || msg.includes("API_KEY_MISSING") || msg.includes("OPENROUTER_KEY_MISSING"))) {
         msg = "OpenRouter AI API key is not configured on the backend server. Please add OPENROUTER_API_KEY to your Render environment variables.";
+      } else if (err.status === 503 && msg.includes("busy")) {
+        msg = "The AI model service is momentarily busy. Please wait a moment and ask your question again.";
       } else if (err.status === 503 && (msg.includes("Hosted API authentication") || msg.includes("BUS_FORECAST_API_KEY"))) {
         msg = "Platform authentication is enabled but BUS_FORECAST_API_KEY is not configured on the server.";
       } else if (err.status === 429) {

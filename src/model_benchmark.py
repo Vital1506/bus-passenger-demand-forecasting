@@ -25,7 +25,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
-from .forecasting import FEATURE_COLUMNS, add_features, wape
+from .forecasting import FEATURE_COLUMNS, add_features, complete_daily_series, wape
 from .modeling import recursive_forecast, seasonal_naive_forecast
 
 
@@ -92,7 +92,26 @@ def run_multi_model_benchmark(
     candidate_models: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run rolling-origin backtest across model candidates and return benchmark leaderboard."""
-    candidates = candidate_models or ["hist_gradient_boosting", "random_forest", "extra_trees"]
+    if horizon < 1 or horizon > 90:
+        raise ValueError("horizon must be between 1 and 90 days")
+    if folds < 1:
+        raise ValueError("folds must be at least 1")
+    required_columns = {"service_date", "route_id", "passengers"}
+    missing_columns = required_columns - set(data.columns)
+    if missing_columns:
+        raise ValueError(f"Benchmark data is missing required columns: {', '.join(sorted(missing_columns))}")
+    if data.empty:
+        raise ValueError("Benchmark data contains no observations")
+    candidates = list(candidate_models) if candidate_models is not None else [
+        "hist_gradient_boosting", "random_forest", "extra_trees"
+    ]
+    allowed_candidates = {"hist_gradient_boosting", "random_forest", "extra_trees"}
+    unknown_candidates = set(candidates) - allowed_candidates
+    if unknown_candidates:
+        raise ValueError(f"Unsupported candidate model(s): {', '.join(sorted(unknown_candidates))}")
+    if len(candidates) != len(set(candidates)):
+        raise ValueError("Candidate model names must be unique")
+    data = complete_daily_series(data, missing_days="error")
     dates = pd.DatetimeIndex(sorted(data["service_date"].unique()))
     needed = max(90, 29 + horizon * folds)
     if len(dates) < needed:
@@ -109,7 +128,9 @@ def run_multi_model_benchmark(
         train_hist = data[data["service_date"] <= origin].copy()
         actual = data[(data["service_date"] > origin) & (data["service_date"] <= origin + timedelta(days=horizon))].copy()
         baseline = seasonal_naive_forecast(train_hist, horizon)
-        scored = actual.merge(baseline, on=["service_date", "route_id"], how="inner")
+        scored = actual.merge(baseline, on=["service_date", "route_id"], how="left", validate="one_to_one")
+        if scored["baseline"].isna().any():
+            raise ValueError("Seasonal-naive benchmark did not cover every actual route/date row")
         scored["residual"] = scored["passengers"] - scored["baseline"]
         all_residuals["seasonal_naive"].extend(scored["residual"].tolist())
         naive_predictions.append(scored)
@@ -143,7 +164,9 @@ def run_multi_model_benchmark(
             pipeline.fit(supervised[FEATURE_COLUMNS], supervised["passengers"])
 
             pred = recursive_forecast(pipeline, train_hist, horizon)
-            scored = actual.merge(pred, on=["service_date", "route_id"], how="inner")
+            scored = actual.merge(pred, on=["service_date", "route_id"], how="left", validate="one_to_one")
+            if scored["predicted_passengers"].isna().any():
+                raise ValueError(f"{model_name} did not forecast every actual route/date row")
             scored["residual"] = scored["passengers"] - scored["predicted_passengers"]
             all_residuals[model_name].extend(scored["residual"].tolist())
             model_preds.append(scored)

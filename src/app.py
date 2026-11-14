@@ -231,10 +231,14 @@ def ensure_system_initialized() -> None:
     if DATA_PATH.exists() and MODEL_PATH.exists():
         try:
             forecasts = build_forecast(DATA_PATH, MODEL_PATH, days=7, missing_days="error")
+            import joblib
+
+            model_bundle = joblib.load(MODEL_PATH)
+            forecast_mode = model_bundle.get("forecast_strategy", "machine_learning")
             forecasts.to_csv(FORECAST_PATH, index=False)
             FORECAST_META_PATH.write_text(
                 json.dumps({
-                    "mode": "machine_learning",
+                    "mode": forecast_mode,
                     "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                     "horizon_days": 7,
                 }),
@@ -258,6 +262,7 @@ def ensure_system_initialized() -> None:
                 "model_trained": True,
                 "trained_through": data["service_date"].max().date().isoformat(),
                 "horizon_days": 7,
+                "forecast_mode": forecast_mode,
                 "metrics": metrics_dict,
                 "forecasts": forecasts.to_dict(orient="records"),
                 "forecast_updated_at": datetime.now(timezone.utc).isoformat(),
@@ -578,7 +583,7 @@ def status_payload() -> dict:
         result["horizon_days"] = PUBLIC_DEMO_CACHE.get("horizon_days")
         result["metrics"] = PUBLIC_DEMO_CACHE.get("metrics")
         result["forecasts"] = PUBLIC_DEMO_CACHE.get("forecasts", [])
-        result["forecast_mode"] = "machine_learning"
+        result["forecast_mode"] = PUBLIC_DEMO_CACHE.get("forecast_mode", "machine_learning")
         result["forecast_updated_at"] = PUBLIC_DEMO_CACHE.get("forecast_updated_at")
 
     try:
@@ -596,16 +601,21 @@ def status_payload() -> dict:
 def save_forecast(days: int, missing_days: str = "error") -> pd.DataFrame:
     if not DATA_PATH.exists():
         raise HTTPException(status_code=409, detail="Upload daily route counts or load demo data first")
+    mode = "weekday_average"
     try:
         if MODEL_PATH.exists():
             forecast = build_forecast(DATA_PATH, MODEL_PATH, days, missing_days)
+            import joblib
+
+            bundle = joblib.load(MODEL_PATH)
+            mode = bundle.get("forecast_strategy", "machine_learning")
         else:
             data = load_data(str(DATA_PATH))
             dense = complete_daily_series(data, missing_days=missing_days)
             forecast = weekday_average_forecast(dense, days)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    persist_forecast(forecast, "machine_learning" if MODEL_PATH.exists() else "weekday_average")
+    persist_forecast(forecast, mode)
     return forecast
 
 
@@ -647,7 +657,7 @@ def readiness() -> JSONResponse:
     model_ready = MODEL_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("model_trained")))
     forecast_ready = FORECAST_PATH.exists() or (PUBLIC_DEMO_CACHE is not None and bool(PUBLIC_DEMO_CACHE.get("forecasts")))
     routes_count = PUBLIC_DEMO_CACHE.get("route_count", 0) if PUBLIC_DEMO_CACHE else 0
-    ready = db_h.get("connected", False) and st_h.get("writable", False) and data_ready and model_ready
+    ready = db_h.get("connected", False) and st_h.get("writable", False) and data_ready and model_ready and forecast_ready
     return JSONResponse(
         status_code=200 if ready else 503,
         content={
@@ -866,7 +876,6 @@ def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
     """Return a cached, read-only synthetic forecast without touching operator data."""
     if not isinstance(days, int):
         days = getattr(days, "default", 7)
-    global PUBLIC_DEMO_CACHE
     if PUBLIC_DEMO_CACHE is not None:
         return public_demo_forecast_for_days(days)
     with PUBLIC_DEMO_LOCK:
@@ -1695,6 +1704,9 @@ async def ai_chat(
             "EMPTY_MESSAGE": 422,
             "MODEL_UNAVAILABLE": 502,
             "NETWORK_ERROR": 502,
+            "PROVIDER_BUSY": 503,
+            "INVALID_RESPONSE": 502,
+            "EMPTY_RESPONSE": 502,
         }
         code = status_code_map.get(result.get("error_code"), 500)
         return JSONResponse(status_code=code, content=result)
