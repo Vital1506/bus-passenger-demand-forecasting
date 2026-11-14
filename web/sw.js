@@ -7,8 +7,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/health") || url.pathname.startsWith("/ready")) return;
   event.respondWith(fetch(request).then((response) => {
-    const copy = response.clone();
-    caches.open(CACHE).then((cache) => cache.put(request, copy));
+    if (response.ok && response.type !== "opaque") {
+      const copy = response.clone();
+      caches.open(CACHE).then((cache) => cache.put(request, copy));
+    }
     return response;
   }).catch(async () => (await caches.match(request)) || Response.error()));
 });
