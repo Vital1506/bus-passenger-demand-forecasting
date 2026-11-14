@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [app, html] = await Promise.all([
+const [app, html, sw] = await Promise.all([
   readFile(new URL("../web/app.js", import.meta.url), "utf8"),
   readFile(new URL("../web/index.html", import.meta.url), "utf8"),
+  readFile(new URL("../web/sw.js", import.meta.url), "utf8"),
 ]);
 
 test("every statically referenced UI element exists in the app shell", () => {
@@ -84,4 +85,12 @@ test("ai assistant declares accessible toggle, chat panel, and interactive contr
   assert.match(html, /id="aiSuggestedPrompts"/);
   assert.match(app, /\/api\/ai\/chat/);
   assert.match(app, /\/api\/ai\/status/);
+});
+
+test("service worker and app script employ cache-busting and bypass health/ready checks", () => {
+  assert.match(html, /<script type="module" src="\/static\/app\.js\?v=\d+"><\/script>/);
+  assert.match(sw, /const CACHE = "bus-demand-ui-v11";/);
+  assert.match(sw, /url\.pathname\.startsWith\("\/health"\)/);
+  assert.match(sw, /url\.pathname\.startsWith\("\/ready"\)/);
+  assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
 });
