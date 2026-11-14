@@ -1694,6 +1694,9 @@ async def ai_chat(
             "EMPTY_MESSAGE": 422,
             "MODEL_UNAVAILABLE": 502,
             "NETWORK_ERROR": 502,
+            "PROVIDER_BUSY": 503,
+            "INVALID_RESPONSE": 502,
+            "EMPTY_RESPONSE": 502,
         }
         code = status_code_map.get(result.get("error_code"), 500)
         return JSONResponse(status_code=code, content=result)

@@ -382,20 +382,44 @@ async def call_openrouter_api(
             )
 
         if response.status_code == 200:
-            data = response.json()
-            choices = data.get("choices", [])
-            if choices and "message" in choices[0]:
-                reply_content = choices[0]["message"].get("content", "").strip()
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.error("Failed to parse OpenRouter JSON: %s (body: %s)", json_err, response.text[:200])
                 return {
-                    "status": "ok",
-                    "reply": reply_content,
-                    "model": data.get("model", target_model),
-                    "usage": data.get("usage"),
+                    "status": "error",
+                    "error_code": "INVALID_RESPONSE",
+                    "message": "The AI service returned an unparseable response. Please try again.",
                 }
+
+            choices = data.get("choices", [])
+            if choices and isinstance(choices, list) and isinstance(choices[0], dict):
+                msg_obj = choices[0].get("message")
+                if isinstance(msg_obj, dict):
+                    raw_content = msg_obj.get("content")
+                    if not raw_content:
+                        raw_content = msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or ""
+                    reply_content = str(raw_content or "").strip()
+                    if reply_content:
+                        return {
+                            "status": "ok",
+                            "reply": reply_content,
+                            "model": data.get("model", target_model),
+                            "usage": data.get("usage"),
+                        }
+
             return {
                 "status": "error",
                 "error_code": "EMPTY_RESPONSE",
-                "message": "The AI model returned an empty response.",
+                "message": "The AI model returned an empty response. Please ask your question again.",
+            }
+
+        elif response.status_code in {500, 502, 503, 504, 524}:
+            logger.warning("OpenRouter upstream provider error %s", response.status_code)
+            return {
+                "status": "error",
+                "error_code": "PROVIDER_BUSY",
+                "message": f"The OpenRouter free-tier AI provider is currently busy (HTTP {response.status_code}). Please retry in a moment.",
             }
 
         elif response.status_code == 401:

@@ -1579,6 +1579,8 @@ function setupAiAssistant() {
         msg = "Authentication required: If you are an operator, click Settings (⚙️) and enter your API access key.";
       } else if (err.status === 503 && (msg.includes("OpenRouter") || msg.includes("API_KEY_MISSING") || msg.includes("OPENROUTER_KEY_MISSING"))) {
         msg = "OpenRouter AI API key is not configured on the backend server. Please add OPENROUTER_API_KEY to your Render environment variables.";
+      } else if (err.status === 503 && msg.includes("busy")) {
+        msg = "The AI model service is momentarily busy. Please wait a moment and ask your question again.";
       } else if (err.status === 503 && (msg.includes("Hosted API authentication") || msg.includes("BUS_FORECAST_API_KEY"))) {
         msg = "Platform authentication is enabled but BUS_FORECAST_API_KEY is not configured on the server.";
       } else if (err.status === 429) {
