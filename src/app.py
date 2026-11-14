@@ -596,16 +596,21 @@ def status_payload() -> dict:
 def save_forecast(days: int, missing_days: str = "error") -> pd.DataFrame:
     if not DATA_PATH.exists():
         raise HTTPException(status_code=409, detail="Upload daily route counts or load demo data first")
+    mode = "weekday_average"
     try:
         if MODEL_PATH.exists():
             forecast = build_forecast(DATA_PATH, MODEL_PATH, days, missing_days)
+            import joblib
+
+            bundle = joblib.load(MODEL_PATH)
+            mode = bundle.get("forecast_strategy", "machine_learning")
         else:
             data = load_data(str(DATA_PATH))
             dense = complete_daily_series(data, missing_days=missing_days)
             forecast = weekday_average_forecast(dense, days)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    persist_forecast(forecast, "machine_learning" if MODEL_PATH.exists() else "weekday_average")
+    persist_forecast(forecast, mode)
     return forecast
 
 
