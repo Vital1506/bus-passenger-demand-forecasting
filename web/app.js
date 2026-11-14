@@ -1239,27 +1239,28 @@ async function waitForServer() {
   const deadline = Date.now() + 60000;
   const delays = [800, 1500, 3000, 5000];
   let attempt = 0;
+  let lastError = null;
   while (Date.now() < deadline) {
     try {
       await api("/health");
-      try {
-        const ready = await api("/api/ready");
-        if (ready && ready.status === "ready") return;
-      } catch (_) {}
-      return;
-    } catch (_) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      const elapsed = Math.round((Date.now() - state.openingStartedAt) / 1000);
-      if (elapsed > 4) {
-        setSplashStatus(`Waking up cloud server (${elapsed}s elapsed, cold start can take up to 60s)…`);
-      } else {
-        setSplashStatus("Connecting to transit forecast service…");
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)));
+      const ready = await api("/api/ready");
+      if (ready && ready.status === "ready" && ready.forecasts_ready === true) return;
+      lastError = new Error("Forecast service is still initializing");
+    } catch (error) {
+      lastError = error;
     }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const elapsed = Math.round((Date.now() - state.openingStartedAt) / 1000);
+    if (elapsed > 4) {
+      setSplashStatus(`Waking up cloud server (${elapsed}s elapsed, waiting for forecast readiness)…`);
+    } else {
+      setSplashStatus("Connecting to transit forecast service…");
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)));
   }
-  throw new Error("Server wake-up timed out");
+  throw new Error(lastError?.message || "Server wake-up timed out");
 }
 async function withBusy(label, operation) {
   if (state.busy) return;
