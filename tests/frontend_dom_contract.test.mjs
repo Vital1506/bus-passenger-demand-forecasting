@@ -96,3 +96,9 @@ test("service worker invalidates stale app cache and never caches live health or
   assert.match(serviceWorker, /\/static\/app\.js\?v=11/);
   assert.match(html, /src=["']\/static\/app\.js\?v=11["']/);
 });
+
+
+test("startup waits for forecast readiness instead of accepting health-only responses", () => {
+  assert.match(app, /ready\.status === "ready" && ready\.forecasts_ready === true/);
+  assert.match(app, /Forecast service is still initializing/);
+});
