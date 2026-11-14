@@ -231,10 +231,14 @@ def ensure_system_initialized() -> None:
     if DATA_PATH.exists() and MODEL_PATH.exists():
         try:
             forecasts = build_forecast(DATA_PATH, MODEL_PATH, days=7, missing_days="error")
+            import joblib
+
+            model_bundle = joblib.load(MODEL_PATH)
+            forecast_mode = model_bundle.get("forecast_strategy", "machine_learning")
             forecasts.to_csv(FORECAST_PATH, index=False)
             FORECAST_META_PATH.write_text(
                 json.dumps({
-                    "mode": "machine_learning",
+                    "mode": forecast_mode,
                     "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                     "horizon_days": 7,
                 }),
@@ -258,6 +262,7 @@ def ensure_system_initialized() -> None:
                 "model_trained": True,
                 "trained_through": data["service_date"].max().date().isoformat(),
                 "horizon_days": 7,
+                "forecast_mode": forecast_mode,
                 "metrics": metrics_dict,
                 "forecasts": forecasts.to_dict(orient="records"),
                 "forecast_updated_at": datetime.now(timezone.utc).isoformat(),
@@ -578,7 +583,7 @@ def status_payload() -> dict:
         result["horizon_days"] = PUBLIC_DEMO_CACHE.get("horizon_days")
         result["metrics"] = PUBLIC_DEMO_CACHE.get("metrics")
         result["forecasts"] = PUBLIC_DEMO_CACHE.get("forecasts", [])
-        result["forecast_mode"] = "machine_learning"
+        result["forecast_mode"] = PUBLIC_DEMO_CACHE.get("forecast_mode", "machine_learning")
         result["forecast_updated_at"] = PUBLIC_DEMO_CACHE.get("forecast_updated_at")
 
     try:
