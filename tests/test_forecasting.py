@@ -4,7 +4,8 @@ import unittest
 
 import pandas as pd
 
-from src.forecasting import add_features, complete_daily_series, load_data
+from src.forecasting import add_features, complete_daily_series, load_data, wape
+from src.train import select_forecast_strategy
 from src.modeling import seasonal_naive_forecast, weekday_average_forecast
 from src.schedule_import import schedules_to_synthetic_counts
 
@@ -55,6 +56,18 @@ class ForecastingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least 28"):
             weekday_average_forecast(self.history.iloc[:27], 7)
 
+
+    def test_wape_returns_zero_for_perfect_zero_demand_predictions(self):
+        self.assertEqual(wape(pd.Series([0, 0]).to_numpy(), pd.Series([0, 0]).to_numpy()), 0.0)
+
+    def test_wape_rejects_nonzero_predictions_when_actual_total_is_zero(self):
+        with self.assertRaisesRegex(ValueError, "WAPE is undefined"):
+            wape(pd.Series([0, 0]).to_numpy(), pd.Series([1, 0]).to_numpy())
+
+    def test_forecast_strategy_promotes_ml_only_when_it_beats_baseline(self):
+        self.assertEqual(select_forecast_strategy({"wape": 0.10}, {"wape": 0.12}), "machine_learning")
+        self.assertEqual(select_forecast_strategy({"wape": 0.12}, {"wape": 0.12}), "seasonal_naive")
+        self.assertEqual(select_forecast_strategy({"wape": 0.14}, {"wape": 0.12}), "seasonal_naive")
 
     def test_timetable_import_creates_a_labelled_synthetic_route_panel(self):
         timetable = b"From,To,Operator,Departure\nA,B,Transit Co,08:00\nA,B,Transit Co,09:00\nB,C,Transit Co,10:00\n"
