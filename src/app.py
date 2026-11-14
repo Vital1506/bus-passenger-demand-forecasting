@@ -866,7 +866,6 @@ def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
     """Return a cached, read-only synthetic forecast without touching operator data."""
     if not isinstance(days, int):
         days = getattr(days, "default", 7)
-    global PUBLIC_DEMO_CACHE
     if PUBLIC_DEMO_CACHE is not None:
         return public_demo_forecast_for_days(days)
     with PUBLIC_DEMO_LOCK:
