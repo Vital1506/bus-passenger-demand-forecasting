@@ -1,9 +1,11 @@
 """Core data-contract and time-series regression checks."""
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
+from src.forecast import build_forecast
 from src.forecasting import add_features, complete_daily_series, load_data, wape
 from src.train import select_forecast_strategy
 from src.modeling import seasonal_naive_forecast, weekday_average_forecast
@@ -68,6 +70,29 @@ class ForecastingContractTests(unittest.TestCase):
         self.assertEqual(select_forecast_strategy({"wape": 0.10}, {"wape": 0.12}), "machine_learning")
         self.assertEqual(select_forecast_strategy({"wape": 0.12}, {"wape": 0.12}), "seasonal_naive")
         self.assertEqual(select_forecast_strategy({"wape": 0.14}, {"wape": 0.12}), "seasonal_naive")
+
+    def test_build_forecast_uses_selected_seasonal_naive_strategy(self):
+        data_path = "data/sample_daily_ridership.csv"
+        history = complete_daily_series(load_data(data_path))
+        bundle = {
+            "horizon": 7,
+            "trained_through": history["service_date"].max().date().isoformat(),
+            "routes": sorted(history["route_id"].astype(str).unique()),
+            "forecast_strategy": "seasonal_naive",
+            "route_error_band_90": {},
+            "global_error_band_90": 25.0,
+            "model": None,
+        }
+        with patch("src.forecast.joblib.load", return_value=bundle):
+            forecast = build_forecast(data_path, "unused-model.joblib", days=7)
+
+        expected = seasonal_naive_forecast(history, 7)
+        pd.testing.assert_series_equal(
+            forecast["predicted_passengers"],
+            expected["baseline"].round(2),
+            check_names=False,
+        )
+        self.assertTrue((forecast["upper_90_approx"] >= forecast["predicted_passengers"]).all())
 
     def test_timetable_import_creates_a_labelled_synthetic_route_panel(self):
         timetable = b"From,To,Operator,Departure\nA,B,Transit Co,08:00\nA,B,Transit Co,09:00\nB,C,Transit Co,10:00\n"
