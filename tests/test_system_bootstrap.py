@@ -103,3 +103,30 @@ def test_public_demo_status_returns_submillisecond(clean_test_env):
     assert result["route_count"] == 3
     assert len(result["forecasts"]) == 21
     assert result["public_demo"] is True
+
+
+
+def test_readiness_is_not_ready_when_forecast_artifact_is_missing(clean_test_env, monkeypatch):
+    """A healthy database/model is insufficient when no forecast artifact exists."""
+    import src.app as app_module
+
+    data_path = clean_test_env / "daily_ridership.csv"
+    model_path = clean_test_env / "artifacts" / "model.joblib"
+    forecast_path = clean_test_env / "forecast.csv"
+    data_path.write_text("service_date,route_id,passengers\n2026-11-01,R10,10\n", encoding="utf-8")
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"test-model-placeholder")
+    assert not forecast_path.exists()
+
+    monkeypatch.setattr(app_module, "PUBLIC_DEMO_CACHE", None)
+    monkeypatch.setattr(app_module, "check_db_health", lambda: {"connected": True})
+    monkeypatch.setattr(app_module, "check_storage_health", lambda: {"writable": True})
+
+    response = readiness()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["status"] == "not_ready"
+    assert payload["data_loaded"] is True
+    assert payload["model_ready"] is True
+    assert payload["forecasts_ready"] is False
