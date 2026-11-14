@@ -88,5 +88,21 @@ def make_model_frame(data: pd.DataFrame, missing_days: str = "error") -> pd.Data
 
 
 def wape(actual: np.ndarray, predicted: np.ndarray) -> float:
-    denominator = float(np.abs(actual).sum())
-    return float(np.abs(actual - predicted).sum() / denominator) if denominator else float("nan")
+    """Calculate WAPE and reject undefined or non-finite evaluation inputs."""
+    actual_values = np.asarray(actual, dtype=float)
+    predicted_values = np.asarray(predicted, dtype=float)
+    if actual_values.ndim != 1 or predicted_values.ndim != 1:
+        raise ValueError("WAPE inputs must be one-dimensional arrays")
+    if actual_values.shape != predicted_values.shape:
+        raise ValueError("WAPE actual and predicted arrays must have the same shape")
+    if actual_values.size == 0:
+        raise ValueError("WAPE requires at least one observation")
+    if not np.isfinite(actual_values).all() or not np.isfinite(predicted_values).all():
+        raise ValueError("WAPE inputs must contain only finite values")
+    denominator = float(np.abs(actual_values).sum())
+    numerator = float(np.abs(actual_values - predicted_values).sum())
+    if denominator == 0:
+        if numerator == 0:
+            return 0.0
+        raise ValueError("WAPE is undefined when total actual demand is zero and predictions are nonzero")
+    return numerator / denominator
