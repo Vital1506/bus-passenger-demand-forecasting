@@ -94,3 +94,13 @@ test("service worker and app script employ cache-busting and bypass health/ready
   assert.match(sw, /url\.pathname\.startsWith\("\/ready"\)/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
 });
+
+test("startup waits for actual forecast readiness and retries when it is unavailable", () => {
+  assert.match(app, /ready\.status === "ready" && ready\.forecasts_ready === true/);
+  assert.match(app, /Forecast service is still initializing/);
+  assert.match(app, /waiting for forecast readiness/);
+});
+
+test("service worker caches only successful non-opaque static responses", () => {
+  assert.match(sw, /response\.ok && response\.type !== "opaque"/);
+});
