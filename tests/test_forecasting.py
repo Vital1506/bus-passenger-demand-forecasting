@@ -1,13 +1,15 @@
 """Core data-contract and time-series regression checks."""
 
 import unittest
+
+import joblib
 from unittest.mock import patch
 
 import pandas as pd
 
 from src.forecast import build_forecast
 from src.forecasting import add_features, complete_daily_series, load_data, wape
-from src.train import select_forecast_strategy
+from src.train import select_forecast_strategy, train_project
 from src.modeling import seasonal_naive_forecast, weekday_average_forecast
 from src.schedule_import import schedules_to_synthetic_counts
 
@@ -106,6 +108,33 @@ class ForecastingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "From and To"):
             schedules_to_synthetic_counts(b"Operator,Distance\nTransit Co,50\n", days=60)
 
+
+
+
+def test_training_pipeline_saves_strategy_and_produces_forecasts(tmp_path):
+    data_path = "data/sample_daily_ridership.csv"
+    model_path = tmp_path / "model.joblib"
+    result = train_project(
+        data_path=data_path,
+        model_out=model_path,
+        horizon=7,
+        folds=1,
+        metrics_out=tmp_path / "metrics.json",
+        predictions_out=tmp_path / "backtest.csv",
+        holdout_days=14,
+        holdout_predictions_out=tmp_path / "holdout.csv",
+    )
+
+    bundle = joblib.load(model_path)
+    assert result["forecast_strategy"] in {"machine_learning", "seasonal_naive"}
+    assert bundle["forecast_strategy"] == result["forecast_strategy"]
+
+    forecast = build_forecast(data_path, model_path, days=7)
+    assert len(forecast) == len(bundle["routes"]) * 7
+    assert forecast["predicted_passengers"].notna().all()
+    assert (forecast["predicted_passengers"] >= 0).all()
+    assert (forecast["lower_90_approx"] <= forecast["predicted_passengers"]).all()
+    assert (forecast["upper_90_approx"] >= forecast["predicted_passengers"]).all()
 
 if __name__ == "__main__":
     unittest.main()
