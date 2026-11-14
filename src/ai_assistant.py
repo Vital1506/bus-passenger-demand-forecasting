@@ -250,7 +250,7 @@ def extract_system_context(
                 logger.warning("Could not parse forecast.csv: %s", exc)
 
     # 4. Fallback to public demo cache if no operator forecast file exists on disk
-    if not context["forecast_available"]:
+    if not context["forecast_available"] and not explicit_dir:
         try:
             import sys
             app_mod = sys.modules.get("src.app")

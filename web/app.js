@@ -12,7 +12,7 @@ async function api(path, options = {}) {
   if (accessKey()) headers.set("Authorization", `Bearer ${accessKey()}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 9000 : 90000);
+  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 25000 : 90000);
   try {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
@@ -1211,7 +1211,7 @@ async function refreshStatus() {
         setConnection(true);
         connected = true;
       } catch (error) {
-        if (!error.message.includes("access key")) throw error;
+        console.warn("Operator endpoint unavailable, falling back to public demo:", error.message);
       }
     }
     if (!connected) {
