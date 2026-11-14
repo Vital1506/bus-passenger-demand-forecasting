@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [app, html] = await Promise.all([
+const [app, html, serviceWorker] = await Promise.all([
   readFile(new URL("../web/app.js", import.meta.url), "utf8"),
   readFile(new URL("../web/index.html", import.meta.url), "utf8"),
+  readFile(new URL("../web/sw.js", import.meta.url), "utf8"),
 ]);
 
 test("every statically referenced UI element exists in the app shell", () => {
@@ -84,4 +85,20 @@ test("ai assistant declares accessible toggle, chat panel, and interactive contr
   assert.match(html, /id="aiSuggestedPrompts"/);
   assert.match(app, /\/api\/ai\/chat/);
   assert.match(app, /\/api\/ai\/status/);
+});
+
+
+test("service worker invalidates stale app cache and never caches live health or API responses", () => {
+  assert.match(serviceWorker, /bus-demand-ui-v11/);
+  assert.match(serviceWorker, /url\.pathname === ["']\/health["']/);
+  assert.match(serviceWorker, /url\.pathname === ["']\/ready["']/);
+  assert.match(serviceWorker, /url\.pathname\.startsWith\(["']\/api\/["']\)/);
+  assert.match(serviceWorker, /\/static\/app\.js\?v=11/);
+  assert.match(html, /src=["']\/static\/app\.js\?v=11["']/);
+});
+
+
+test("startup waits for forecast readiness instead of accepting health-only responses", () => {
+  assert.match(app, /ready\.status === "ready" && ready\.forecasts_ready === true/);
+  assert.match(app, /Forecast service is still initializing/);
 });
