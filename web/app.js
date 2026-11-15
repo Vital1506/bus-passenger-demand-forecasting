@@ -1215,11 +1215,21 @@ async function refreshStatus() {
       }
     }
     if (!connected) {
+      // Reveal the dashboard as soon as the health endpoint responds. The public
+      // demo forecast can initialize in the background without blocking navigation.
       setPublicDemoMode(true, false);
-      if (state.opening) setSplashStatus("Loading the synthetic sample forecast…");
-      render(await api("/api/public-demo/status"));
       setConnection(true);
       connected = true;
+      if (state.opening) setSplashStatus("Server online. Opening dashboard while sample data loads…");
+      void api("/api/public-demo/status")
+        .then((demo) => {
+          setPublicDemoMode(true, false);
+          render(demo);
+        })
+        .catch((error) => {
+          console.warn("Public demo forecast is still initializing:", error.message);
+          toast("Dashboard opened. Sample forecasts are still loading; try refreshing data shortly.", true);
+        });
     }
   } catch (error) {
     setConnection(false);

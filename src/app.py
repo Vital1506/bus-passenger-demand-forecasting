@@ -308,12 +308,26 @@ def ensure_system_initialized() -> None:
             logger.error("Failed to generate initial forecast: %s", exc)
 
 
+def _bootstrap_system_in_background() -> None:
+    """Initialize demo data and model artifacts without blocking ASGI startup."""
+    with PUBLIC_DEMO_LOCK:
+        if PUBLIC_DEMO_CACHE is not None:
+            return
+        try:
+            ensure_system_initialized()
+        except Exception:
+            logger.exception("Background forecast bootstrap failed")
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    try:
-        ensure_system_initialized()
-    except Exception as exc:
-        logger.error("Lifespan startup bootstrap error: %s", exc)
+    # The web server can answer health checks immediately. Public demo requests
+    # synchronize on PUBLIC_DEMO_LOCK while this bootstrap builds the forecast.
+    threading.Thread(
+        target=_bootstrap_system_in_background,
+        name="bus-forecast-bootstrap",
+        daemon=True,
+    ).start()
     yield
 
 

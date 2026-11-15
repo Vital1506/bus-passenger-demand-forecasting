@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [app, html, sw] = await Promise.all([
+const [app, html, sw, server] = await Promise.all([
   readFile(new URL("../web/app.js", import.meta.url), "utf8"),
   readFile(new URL("../web/index.html", import.meta.url), "utf8"),
   readFile(new URL("../web/sw.js", import.meta.url), "utf8"),
+  readFile(new URL("../src/app.py", import.meta.url), "utf8"),
 ]);
 
 test("every statically referenced UI element exists in the app shell", () => {
@@ -89,19 +90,23 @@ test("ai assistant declares accessible toggle, chat panel, and interactive contr
 
 test("service worker and app script employ cache-busting and bypass health/ready checks", () => {
   assert.match(html, /<script type="module" src="\/static\/app\.js\?v=\d+"><\/script>/);
-  assert.match(sw, /const CACHE = "bus-demand-ui-v12";/);
+  assert.match(sw, /const CACHE = "bus-demand-ui-v13";/);
   assert.match(sw, /url\.pathname === ["']\/health["']/);
   assert.match(sw, /url\.pathname === ["']\/ready["']/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(sw, /\/static\/app\.js\?v=12/);
 });
 
-test("startup uses backend health and does not block the public dashboard on database readiness", () => {
-  const startup = app.slice(app.indexOf("async function waitForServer()"), app.indexOf("async function withBusy("));
-  assert.match(startup, /api\("\/health"\)/);
-  assert.match(startup, /Cloud server is online\. Loading dashboard data/);
-  assert.doesNotMatch(startup, /api\("\/api\/ready"\)|forecasts_ready/);
-  assert.match(app, /\/api\/public-demo\/status/);
+test("public dashboard opens before the sample forecast request finishes", () => {
+  const refresh = app.slice(app.indexOf("async function refreshStatus()"), app.indexOf("async function waitForServer()"));
+  assert.match(refresh, /connected = true;[\s\S]*void api\("\/api\/public-demo\/status"\)/);
+  assert.match(refresh, /\.then\(\(demo\) => \{[\s\S]*render\(demo\)/);
+  assert.doesNotMatch(refresh, /render\(await api\("\/api\/public-demo\/status"\)\)/);
+  assert.match(app, /Cloud server is online\. Loading dashboard data/);
+});
+
+test("server bootstrap runs in the background so health checks can respond during initialization", () => {
+  assert.match(server, /def _bootstrap_system_in_background\(\)[\s\S]*threading\.Thread\([\s\S]*daemon=True[\s\S]*\.start\(\)[\s\S]*yield/);
 });
 
 test("service worker caches only successful non-opaque static responses", () => {
