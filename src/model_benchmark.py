@@ -25,7 +25,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
-from .forecasting import FEATURE_COLUMNS, add_features, wape
+from .forecasting import FEATURE_COLUMNS, add_features, complete_daily_series, wape
 from .modeling import recursive_forecast, seasonal_naive_forecast
 
 
@@ -76,9 +76,12 @@ def compute_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, floa
 
 def calibrate_empirical_intervals(residuals: np.ndarray) -> tuple[float, float]:
     """Calculate empirical 90% error intervals (5th and 95th percentiles) from historical residuals."""
+    if len(residuals) == 0:
+        raise ValueError("Insufficient data: cannot calibrate empirical error intervals without residuals")
+
     if len(residuals) < 10:
-        std = float(np.std(residuals)) if len(residuals) > 0 else 50.0
-        return -1.645 * std, 1.645 * std
+        std = float(np.std(residuals))
+        return round(-1.645 * std, 2), round(1.645 * std, 2)
 
     lower_offset = float(np.percentile(residuals, 5.0))
     upper_offset = float(np.percentile(residuals, 95.0))
@@ -92,7 +95,26 @@ def run_multi_model_benchmark(
     candidate_models: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run rolling-origin backtest across model candidates and return benchmark leaderboard."""
-    candidates = candidate_models or ["hist_gradient_boosting", "random_forest", "extra_trees"]
+    if horizon < 1 or horizon > 90:
+        raise ValueError("horizon must be between 1 and 90 days")
+    if folds < 1:
+        raise ValueError("folds must be at least 1")
+    required_columns = {"service_date", "route_id", "passengers"}
+    missing_columns = required_columns - set(data.columns)
+    if missing_columns:
+        raise ValueError(f"Benchmark data is missing required columns: {', '.join(sorted(missing_columns))}")
+    if data.empty:
+        raise ValueError("Benchmark data contains no observations")
+    candidates = list(candidate_models) if candidate_models is not None else [
+        "hist_gradient_boosting", "random_forest", "extra_trees"
+    ]
+    allowed_candidates = {"hist_gradient_boosting", "random_forest", "extra_trees"}
+    unknown_candidates = set(candidates) - allowed_candidates
+    if unknown_candidates:
+        raise ValueError(f"Unsupported candidate model(s): {', '.join(sorted(unknown_candidates))}")
+    if len(candidates) != len(set(candidates)):
+        raise ValueError("Candidate model names must be unique")
+    data = complete_daily_series(data, missing_days="error")
     dates = pd.DatetimeIndex(sorted(data["service_date"].unique()))
     needed = max(90, 29 + horizon * folds)
     if len(dates) < needed:
@@ -109,7 +131,9 @@ def run_multi_model_benchmark(
         train_hist = data[data["service_date"] <= origin].copy()
         actual = data[(data["service_date"] > origin) & (data["service_date"] <= origin + timedelta(days=horizon))].copy()
         baseline = seasonal_naive_forecast(train_hist, horizon)
-        scored = actual.merge(baseline, on=["service_date", "route_id"], how="inner")
+        scored = actual.merge(baseline, on=["service_date", "route_id"], how="left", validate="one_to_one")
+        if scored["baseline"].isna().any():
+            raise ValueError("Seasonal-naive benchmark did not cover every actual route/date row")
         scored["residual"] = scored["passengers"] - scored["baseline"]
         all_residuals["seasonal_naive"].extend(scored["residual"].tolist())
         naive_predictions.append(scored)
@@ -143,7 +167,9 @@ def run_multi_model_benchmark(
             pipeline.fit(supervised[FEATURE_COLUMNS], supervised["passengers"])
 
             pred = recursive_forecast(pipeline, train_hist, horizon)
-            scored = actual.merge(pred, on=["service_date", "route_id"], how="inner")
+            scored = actual.merge(pred, on=["service_date", "route_id"], how="left", validate="one_to_one")
+            if scored["predicted_passengers"].isna().any():
+                raise ValueError(f"{model_name} did not forecast every actual route/date row")
             scored["residual"] = scored["passengers"] - scored["predicted_passengers"]
             all_residuals[model_name].extend(scored["residual"].tolist())
             model_preds.append(scored)
@@ -179,3 +205,82 @@ def run_multi_model_benchmark(
         "champion_model": champion_model,
         "leaderboard": leaderboard,
     }
+
+
+def calibrate_lead_day_conformal_intervals(
+    residuals_by_lead: dict[int, list[float] | np.ndarray],
+    coverage_level: float = 0.90,
+) -> dict[int, dict[str, float]]:
+    """Compute conformalized empirical prediction intervals for each lead day horizon.
+    
+    Horizons further in the future naturally accumulate higher variance and wider bounds.
+    """
+    alpha = 1.0 - coverage_level
+    results = {}
+    for lead_day, res_list in sorted(residuals_by_lead.items()):
+        arr = np.asarray(res_list, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if len(arr) == 0:
+            results[lead_day] = {
+                "lower_offset": 0.0,
+                "upper_offset": 0.0,
+                "sample_size": 0,
+                "coverage_level": coverage_level,
+            }
+            continue
+
+        n = len(arr)
+        # Conformal quantile adjustment factor (1 + 1/n)
+        q_low_p = max(0.0, (alpha / 2.0) * (1.0 + 1.0 / n) * 100.0)
+        q_high_p = min(100.0, (1.0 - (alpha / 2.0) * (1.0 + 1.0 / n)) * 100.0)
+
+        lower_offset = float(np.percentile(arr, q_low_p))
+        upper_offset = float(np.percentile(arr, q_high_p))
+        results[lead_day] = {
+            "lower_offset": round(lower_offset, 2),
+            "upper_offset": round(upper_offset, 2),
+            "sample_size": n,
+            "coverage_level": coverage_level,
+        }
+    return results
+
+
+def cold_start_route_forecast(
+    new_route_id: str,
+    target_dates: list[str],
+    network_history: pd.DataFrame,
+    scheduled_trips_per_day: int | None = None,
+) -> list[dict[str, Any]]:
+    """Estimate passenger demand for new routes with no prior historical observations.
+    
+    Uses network-wide median passenger intensity per route or per scheduled trip.
+    Explicitly flags output with is_cold_start=True to prevent confusing with trained models.
+    """
+    if network_history.empty or "passengers" not in network_history.columns:
+        raise ValueError("Cannot compute cold-start prior without network historical baseline")
+
+    route_medians = network_history.groupby("route_id")["passengers"].median()
+    system_median = float(route_medians.median())
+
+    # If scheduled trips are known, scale by trip density
+    daily_estimate = system_median
+    if scheduled_trips_per_day and scheduled_trips_per_day > 0:
+        daily_estimate = round(scheduled_trips_per_day * (system_median / 40.0), 1)
+
+    output = []
+    for d in target_dates:
+        d_str = str(d)
+        dt = pd.to_datetime(d_str)
+        # Weekday/weekend ratio
+        multiplier = 0.65 if dt.dayofweek >= 5 else 1.0
+        predicted = round(daily_estimate * multiplier, 1)
+        output.append({
+            "service_date": d_str,
+            "route_id": str(new_route_id),
+            "predicted_passengers": predicted,
+            "lower_90": round(predicted * 0.70, 1),
+            "upper_90": round(predicted * 1.35, 1),
+            "is_cold_start": True,
+            "estimation_method": "network_median_prior",
+        })
+    return output

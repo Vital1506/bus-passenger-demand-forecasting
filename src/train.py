@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -18,12 +19,32 @@ from .forecasting import FEATURE_COLUMNS, add_features, complete_daily_series, l
 from .modeling import build_model, recursive_forecast, seasonal_naive_forecast
 
 
+def get_model_version() -> str:
+    """Retrieve dynamic model version based on environment or semantic timestamped build."""
+    env_ver = os.getenv("BUS_FORECAST_MODEL_VERSION", "").strip()
+    if env_ver:
+        return env_ver
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+    return f"1.0.0+{ts}"
+
+
 def metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
     return {
         "mae": float(mean_absolute_error(actual, predicted)),
         "rmse": float(mean_squared_error(actual, predicted) ** 0.5),
         "wape": float(wape(actual, predicted)),
     }
+
+
+def select_forecast_strategy(
+    model_scores: dict[str, float], baseline_scores: dict[str, float]
+) -> str:
+    """Promote ML only when it beats seasonal naive on rolling-origin WAPE."""
+    model_wape = float(model_scores["wape"])
+    baseline_wape = float(baseline_scores["wape"])
+    if not np.isfinite(model_wape) or not np.isfinite(baseline_wape):
+        return "seasonal_naive"
+    return "machine_learning" if model_wape < baseline_wape else "seasonal_naive"
 
 
 def rolling_backtest(data: pd.DataFrame, horizon: int, folds: int) -> tuple[pd.DataFrame, dict[str, float], dict[str, float]]:
@@ -33,9 +54,9 @@ def rolling_backtest(data: pd.DataFrame, horizon: int, folds: int) -> tuple[pd.D
         raise ValueError(f"Need at least {needed} continuous calendar days for {folds} backtest folds at horizon {horizon}; found {len(dates)}")
     all_predictions = []
     for fold in range(folds, 0, -1):
-        origin = dates[-(horizon * fold + 1)]
+        origin = pd.Timestamp(dates[-(horizon * fold + 1)])
         train_history = data[data["service_date"] <= origin].copy()
-        actual = data[(data["service_date"] > origin) & (data["service_date"] <= origin + pd.Timedelta(days=horizon))].copy()
+        actual = data[(data["service_date"] > origin) & (data["service_date"] <= origin + pd.Timedelta(days=int(horizon)))].copy()
         missing_routes = set(actual["route_id"]) - set(train_history["route_id"])
         if missing_routes:
             raise ValueError(f"Routes first appear after backtest origin {origin.date()}: {', '.join(sorted(missing_routes))}. New-route cold-start forecasting needs separate logic.")
@@ -84,9 +105,9 @@ def final_holdout_backtest(
 
     predictions = []
     for block_number, block_start in enumerate(range(0, holdout_days, horizon), start=1):
-        origin = cutoff + pd.Timedelta(days=block_start)
+        origin = pd.Timestamp(cutoff) + pd.Timedelta(days=int(block_start))
         train_history = data[data["service_date"] <= origin].copy()
-        actual = data[(data["service_date"] > origin) & (data["service_date"] <= origin + pd.Timedelta(days=horizon))].copy()
+        actual = data[(data["service_date"] > origin) & (data["service_date"] <= origin + pd.Timedelta(days=int(horizon)))].copy()
         if len(actual) != horizon * data["route_id"].nunique():
             raise ValueError(f"Final holdout block {block_number} does not contain a complete route/date panel")
         supervised = add_features(train_history).dropna(subset=FEATURE_COLUMNS)
@@ -168,7 +189,7 @@ def train_project(
         holdout_days = max(horizon, ((28 + horizon - 1) // horizon) * horizon)
     if holdout_days < horizon or holdout_days % horizon:
         raise ValueError("holdout-days must be a positive multiple of horizon and at least one full horizon")
-    selection_data = data[data["service_date"] < data["service_date"].max() - pd.Timedelta(days=holdout_days - 1)].copy()
+    selection_data = data[data["service_date"] < pd.Timestamp(data["service_date"].max()) - pd.Timedelta(days=int(holdout_days - 1))].copy()
     selection_needed = max(90, 29 + horizon * folds)
     selection_dates = selection_data["service_date"].nunique()
     if selection_dates < selection_needed:
@@ -181,8 +202,10 @@ def train_project(
     print(f"Rolling-origin model-selection backtest: {folds} folds × {horizon} days")
     for label, score in (("ML model", model_scores), ("Seasonal-naive baseline", baseline_scores)):
         print(f"{label}: MAE={score['mae']:.2f} RMSE={score['rmse']:.2f} WAPE={score['wape']:.2%}")
-    if model_scores["wape"] > baseline_scores["wape"]:
-        print("WARNING: ML model underperformed the seasonal-naive baseline on WAPE; inspect route-level metrics before deployment.")
+    forecast_strategy = select_forecast_strategy(model_scores, baseline_scores)
+    print(f"Selected forecast strategy using rolling-origin WAPE: {forecast_strategy}")
+    if forecast_strategy == "seasonal_naive":
+        print("ML model was not promoted because it did not beat the seasonal-naive baseline.")
 
     by_route = route_metrics(backtest)
     holdout_by_route = route_metrics(holdout)
@@ -225,10 +248,14 @@ def train_project(
         "final_holdout": error_analysis(holdout),
     }, indent=2), encoding="utf-8")
 
-    errors = (backtest["passengers"] - backtest["predicted_passengers"]).abs()
-    global_band = float(errors.quantile(0.90))
+    if forecast_strategy == "machine_learning":
+        selected_residuals = backtest["passengers"] - backtest["predicted_passengers"]
+    else:
+        selected_residuals = backtest["passengers"] - backtest["baseline"]
+    absolute_errors = selected_residuals.abs()
+    global_band = float(absolute_errors.quantile(0.90))
     route_bands = {}
-    for route, group in backtest.assign(abs_error=errors).groupby("route_id"):
+    for route, group in backtest.assign(abs_error=absolute_errors).groupby("route_id"):
         route_bands[str(route)] = float(group["abs_error"].quantile(0.90))
 
     supervised = add_features(data).dropna(subset=FEATURE_COLUMNS)
@@ -238,11 +265,12 @@ def train_project(
         "features": FEATURE_COLUMNS,
         "routes": sorted(data["route_id"].astype(str).unique()),
         "horizon": horizon,
-        "model_version": "0.3.0",
+        "model_version": get_model_version(),
+        "forecast_strategy": forecast_strategy,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "data_sha256": hashlib.sha256(Path(data_path).read_bytes()).hexdigest(),
         "package_versions": {"pandas": pd.__version__, "scikit_learn": sklearn.__version__, "joblib": joblib.__version__},
-        "interval_method": "rolling-origin 90th percentile absolute residual; symmetric and approximate",
+        "interval_method": "rolling-origin 90th percentile absolute residual for the selected forecast strategy; symmetric and approximate",
         "global_error_band_90": global_band,
         "route_error_band_90": route_bands,
         "backtest_model_metrics": model_scores,
@@ -272,6 +300,7 @@ def train_project(
         "final_holdout_baseline_metrics": holdout_baseline_scores,
         "final_holdout_days": holdout_days,
         "model_version": bundle["model_version"],
+        "forecast_strategy": bundle["forecast_strategy"],
         "created_at_utc": bundle["created_at_utc"],
     }
 

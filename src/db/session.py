@@ -111,10 +111,46 @@ def get_engine(database_url: str | None = None) -> Engine:
     return _ENGINE
 
 
+def _migrate_missing_columns(eng: Engine) -> None:
+    from sqlalchemy import inspect
+    try:
+        inspector = inspect(eng)
+        table_names = inspector.get_table_names()
+
+        if "model_artifact_records" in table_names:
+            cols = {c["name"] for c in inspector.get_columns("model_artifact_records")}
+            with eng.begin() as conn:
+                if "model_id" not in cols:
+                    conn.execute(text("ALTER TABLE model_artifact_records ADD COLUMN model_id VARCHAR(64)"))
+                if "strategy" not in cols:
+                    conn.execute(text("ALTER TABLE model_artifact_records ADD COLUMN strategy VARCHAR(64) DEFAULT 'machine_learning'"))
+                if "status" not in cols:
+                    conn.execute(text("ALTER TABLE model_artifact_records ADD COLUMN status VARCHAR(32) DEFAULT 'active'"))
+                if "hyperparameters_json" not in cols:
+                    conn.execute(text("ALTER TABLE model_artifact_records ADD COLUMN hyperparameters_json TEXT"))
+                if "package_versions_json" not in cols:
+                    conn.execute(text("ALTER TABLE model_artifact_records ADD COLUMN package_versions_json TEXT"))
+
+        if "forecast_records" in table_names:
+            cols = {c["name"] for c in inspector.get_columns("forecast_records")}
+            with eng.begin() as conn:
+                if "lead_day" not in cols:
+                    conn.execute(text("ALTER TABLE forecast_records ADD COLUMN lead_day INTEGER"))
+                if "seasonal_naive_predicted" not in cols:
+                    conn.execute(text("ALTER TABLE forecast_records ADD COLUMN seasonal_naive_predicted FLOAT"))
+                if "actual_demand" not in cols:
+                    conn.execute(text("ALTER TABLE forecast_records ADD COLUMN actual_demand FLOAT"))
+                if "actual_observed_at_utc" not in cols:
+                    conn.execute(text("ALTER TABLE forecast_records ADD COLUMN actual_observed_at_utc TIMESTAMP"))
+    except Exception:
+        pass
+
+
 def init_db(engine: Engine | None = None) -> None:
-    """Create all defined database tables."""
+    """Create all defined database tables and verify column schemas."""
     eng = engine or get_engine()
     Base.metadata.create_all(bind=eng)
+    _migrate_missing_columns(eng)
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -119,6 +119,35 @@ def test_call_openrouter_api_success():
         assert headers_sent["Authorization"] == "Bearer sk-or-valid-test-key"
 
 
+def test_call_openrouter_api_null_content_with_reasoning():
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {
+        "id": "gen-456",
+        "model": "deepseek/deepseek-r1:free",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": "Analysis of passenger demand shows 1,341 boardings tomorrow.",
+                }
+            }
+        ],
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = fake_response
+        result = run_async(
+            call_openrouter_api(
+                messages=[{"role": "user", "content": "Explain forecasting results"}],
+                api_key="sk-or-valid-test-key",
+            )
+        )
+        assert result["status"] == "ok"
+        assert "1,341 boardings tomorrow" in result["reply"]
+
+
 def test_call_openrouter_api_401_invalid_key():
     fake_response = MagicMock()
     fake_response.status_code = 401

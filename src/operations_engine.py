@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
+import uuid
 
 from .realtime.feed_ingester import _haversine_distance_meters
 from .realtime.models import OccupancyStatus, VehicleStatus
@@ -107,6 +108,123 @@ class OperationsMetrics:
             "gap_events_count": self.gap_events_count,
             "overcrowding_count": self.overcrowding_count,
         }
+
+
+@dataclass
+class ServiceDisruption:
+    disruption_id: str
+    route_id: str
+    start_time: str
+    end_time: str
+    severity: str = "MEDIUM"
+    impact_factor: float = 0.7
+    description: str = ""
+    agency_id: str = "default"
+    created_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "disruption_id": self.disruption_id,
+            "route_id": self.route_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "severity": self.severity,
+            "impact_factor": self.impact_factor,
+            "description": self.description,
+            "agency_id": self.agency_id,
+            "created_at_utc": self.created_at_utc,
+        }
+
+
+_DISRUPTIONS: list[ServiceDisruption] = []
+
+
+def register_disruption(
+    route_id: str,
+    start_time: str,
+    end_time: str,
+    severity: str = "MEDIUM",
+    impact_factor: float = 0.7,
+    description: str = "",
+    agency_id: str = "default",
+) -> ServiceDisruption:
+    dis_id = f"DISRUPT-{uuid.uuid4().hex[:8].upper()}"
+    disruption = ServiceDisruption(
+        disruption_id=dis_id,
+        route_id=str(route_id).strip(),
+        start_time=str(start_time).strip(),
+        end_time=str(end_time).strip(),
+        severity=str(severity).upper().strip(),
+        impact_factor=float(impact_factor),
+        description=str(description).strip(),
+        agency_id=str(agency_id).strip(),
+    )
+    _DISRUPTIONS.append(disruption)
+    return disruption
+
+
+def list_disruptions(
+    route_id: str | None = None,
+    agency_id: str | None = None,
+    active_only: bool = False,
+) -> list[ServiceDisruption]:
+    res = list(_DISRUPTIONS)
+    if route_id:
+        res = [d for d in res if d.route_id == route_id]
+    if agency_id:
+        res = [d for d in res if d.agency_id == agency_id]
+    if active_only:
+        now_utc = datetime.now(timezone.utc)
+        filtered = []
+        for d in res:
+            try:
+                st = datetime.fromisoformat(d.start_time.replace("Z", "+00:00"))
+                et = datetime.fromisoformat(d.end_time.replace("Z", "+00:00"))
+                if st.tzinfo is None:
+                    st = st.replace(tzinfo=timezone.utc)
+                if et.tzinfo is None:
+                    et = et.replace(tzinfo=timezone.utc)
+                if st <= now_utc <= et:
+                    filtered.append(d)
+            except Exception:
+                filtered.append(d)
+        res = filtered
+    return res
+
+
+def clear_disruptions() -> None:
+    _DISRUPTIONS.clear()
+
+
+def get_disruption_impact(
+    route_id: str,
+    hour: int,
+    target_date: str | None = None,
+    agency_id: str | None = None,
+) -> float:
+    """Calculate combined demand impact multiplier for a route at a given hour."""
+    combined_factor = 1.0
+    for d in _DISRUPTIONS:
+        if d.route_id != route_id:
+            continue
+        if agency_id and d.agency_id not in (agency_id, "default"):
+            continue
+        try:
+            st = datetime.fromisoformat(d.start_time.replace("Z", "+00:00"))
+            et = datetime.fromisoformat(d.end_time.replace("Z", "+00:00"))
+            if target_date:
+                t_date = datetime.fromisoformat(target_date).date()
+            else:
+                t_date = datetime.now(timezone.utc).date()
+
+            h_start = datetime(t_date.year, t_date.month, t_date.day, hour, 0, 0, tzinfo=st.tzinfo)
+            h_end = h_start + timedelta(hours=1)
+
+            if max(st, h_start) < min(et, h_end):
+                combined_factor *= d.impact_factor
+        except Exception:
+            pass
+    return max(0.0, combined_factor)
 
 
 class OperationsDecisionEngine:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -28,12 +30,23 @@ from .db import (
     record_audit_event as repo_record_audit_event,
     record_monthly_import_event as repo_record_monthly_import_event,
     replace_all_daily_counts,
+    compute_forecast_accuracy,
+    list_model_artifacts,
     get_monthly_observations as repo_get_monthly_observations,
     get_monthly_route_history as repo_get_monthly_route_history,
     upsert_monthly_records as repo_upsert_monthly_records,
     write_source_metadata as repo_write_source_metadata,
 )
-from .auth import resolve_role, UserRole
+from .auth import (
+    AuthenticatedPrincipal,
+    UserRole,
+    authorize_ai_chat,
+    enforce_agency_access,
+    require_role,
+    resolve_principal,
+    resolve_role,
+    verify_agency_isolation,
+)
 from .data_quality import get_quality_monitor
 from .forecast import build_forecast
 from .forecasting import REQUIRED_COLUMNS, complete_daily_series, load_data
@@ -53,14 +66,21 @@ from .model_benchmark import run_multi_model_benchmark
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
 from .occupancy_engine import compute_route_capacity_profile, compute_trip_occupancy
-from .operations_engine import get_operations_engine
-from .passenger_data import ingest_apc_dataset, parse_and_validate_apc_data
+from .operations_engine import get_operations_engine, register_disruption, list_disruptions
+from .passenger_data import (
+    ingest_apc_dataset,
+    parse_and_validate_apc_data,
+    parse_and_aggregate_etm_data,
+    aggregate_etm_to_daily,
+    ingest_etm_dataset,
+)
 from .realtime import get_realtime_service
 from .realtime.provider_registry import get_provider_registry
 from .reporting import (
     export_daily_report_csv,
     generate_capacity_risk_report,
     generate_daily_passenger_report,
+    is_safe_webhook_url,
     send_alert_webhook,
 )
 from .route_identity import canonicalize_manual_route_id
@@ -188,6 +208,21 @@ def ensure_system_initialized() -> None:
         except Exception as exc:
             logger.error("Failed to bootstrap sample dataset: %s", exc)
 
+    # 2b. Bootstrap Monthly CTA Ridership Store if missing
+    sample_monthly_csv = project_path("data/sample_cta_monthly_ridership.csv")
+    if not MONTHLY_DATA_PATH.exists() and sample_monthly_csv.exists():
+        try:
+            MONTHLY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            contents = sample_monthly_csv.read_bytes()
+            MonthlyRidershipStore(MONTHLY_DATA_PATH).import_csv(
+                contents,
+                "sample_cta_monthly_ridership.csv",
+                "bundled reference sample",
+            )
+            logger.info("Initialized MONTHLY_DATA_PATH from bundled sample CTA ridership.")
+        except Exception as exc:
+            logger.warning("Failed to bootstrap sample monthly ridership: %s", exc)
+
     # 3. Bootstrap Model Artifacts in ARTIFACT_DIR
     if not MODEL_PATH.exists():
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -231,10 +266,14 @@ def ensure_system_initialized() -> None:
     if DATA_PATH.exists() and MODEL_PATH.exists():
         try:
             forecasts = build_forecast(DATA_PATH, MODEL_PATH, days=7, missing_days="error")
+            import joblib
+
+            model_bundle = joblib.load(MODEL_PATH)
+            forecast_mode = model_bundle.get("forecast_strategy", "machine_learning")
             forecasts.to_csv(FORECAST_PATH, index=False)
             FORECAST_META_PATH.write_text(
                 json.dumps({
-                    "mode": "machine_learning",
+                    "mode": forecast_mode,
                     "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                     "horizon_days": 7,
                 }),
@@ -258,6 +297,7 @@ def ensure_system_initialized() -> None:
                 "model_trained": True,
                 "trained_through": data["service_date"].max().date().isoformat(),
                 "horizon_days": 7,
+                "forecast_mode": forecast_mode,
                 "metrics": metrics_dict,
                 "forecasts": forecasts.to_dict(orient="records"),
                 "forecast_updated_at": datetime.now(timezone.utc).isoformat(),
@@ -294,83 +334,93 @@ if cors_origins:
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 
-def authorize(authorization: str | None = Header(default=None)) -> None:
-    """Require a configured bearer key on hosted deployments."""
-    if os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() not in {"1", "true", "yes"}:
-        return
-    expected = (
-        os.getenv("BUS_FORECAST_API_KEY")
-        or os.getenv("BUS_FORECAST_OPERATOR_KEY")
-        or os.getenv("BUS_FORECAST_ADMIN_KEY")
-    )
-    if not expected:
-        raise HTTPException(status_code=503, detail="Hosted API authentication is not configured")
-    if authorization != f"Bearer {expected}":
-        raise HTTPException(status_code=401, detail="Enter the API access key in app settings")
+ROUTE_AUTH_MAP: dict[tuple[str, str], UserRole] = {
+    # Public endpoints
+    ("GET", "/health"): UserRole.PUBLIC,
+    ("GET", "/api/health"): UserRole.PUBLIC,
+    ("GET", "/ready"): UserRole.PUBLIC,
+    ("GET", "/api/ready"): UserRole.PUBLIC,
+    ("GET", "/api/public-demo/status"): UserRole.PUBLIC,
+    ("GET", "/api/public-demo/forecast.csv"): UserRole.PUBLIC,
+    ("GET", "/api/public-demo/sample.csv"): UserRole.PUBLIC,
+    ("GET", "/api/public/monthly-data/routes"): UserRole.PUBLIC,
+    ("GET", "/api/public/monthly-data/routes/{route_id}/history"): UserRole.PUBLIC,
+    ("GET", "/api/template.csv"): UserRole.PUBLIC,
+    ("GET", "/api/gtfs/feeds"): UserRole.PUBLIC,
+    ("GET", "/api/gtfs/agencies"): UserRole.PUBLIC,
+    ("GET", "/api/gtfs/routes"): UserRole.PUBLIC,
+    ("GET", "/api/gtfs/routes/{route_id}"): UserRole.PUBLIC,
+    ("GET", "/api/gtfs/stops"): UserRole.PUBLIC,
+    ("GET", "/api/auth/roles"): UserRole.PUBLIC,
+    ("GET", "/api/ai/status"): UserRole.PUBLIC,
+    ("POST", "/api/ai/chat"): UserRole.PUBLIC,
+    ("GET", "/manifest.webmanifest"): UserRole.PUBLIC,
+    ("GET", "/sw.js"): UserRole.PUBLIC,
+    ("GET", "/"): UserRole.PUBLIC,
+
+    # Analyst (read forecasts, reports, occupancy, read operations, telemetry)
+    ("GET", "/api/status"): UserRole.ANALYST,
+    ("GET", "/api/monthly-data/status"): UserRole.ANALYST,
+    ("GET", "/api/monthly-data/routes"): UserRole.ANALYST,
+    ("GET", "/api/monthly-data/routes/{route_id}/history"): UserRole.ANALYST,
+    ("POST", "/api/forecast"): UserRole.ANALYST,
+    ("GET", "/api/forecast.csv"): UserRole.ANALYST,
+    ("GET", "/api/forecast/realtime/{route_id}"): UserRole.ANALYST,
+    ("GET", "/api/forecast/intraday"): UserRole.ANALYST,
+    ("GET", "/api/forecast/accuracy"): UserRole.ANALYST,
+    ("GET", "/api/model/registry"): UserRole.ANALYST,
+    ("GET", "/api/operations/disruptions"): UserRole.ANALYST,
+    ("GET", "/api/operations/alerts"): UserRole.ANALYST,
+    ("GET", "/api/operations/dispatch-recommendations"): UserRole.ANALYST,
+    ("GET", "/api/operations/metrics"): UserRole.ANALYST,
+    ("GET", "/api/occupancy/trip/{trip_id}"): UserRole.ANALYST,
+    ("GET", "/api/occupancy/route/{route_id}"): UserRole.ANALYST,
+    ("POST", "/api/simulator/evaluate"): UserRole.ANALYST,
+    ("GET", "/api/reports/daily"): UserRole.ANALYST,
+    ("GET", "/api/reports/daily/csv"): UserRole.ANALYST,
+    ("GET", "/api/reports/capacity-risk"): UserRole.ANALYST,
+    ("GET", "/api/quality/drift-status"): UserRole.ANALYST,
+    ("GET", "/api/realtime/vehicles"): UserRole.ANALYST,
+    ("GET", "/api/realtime/vehicles/{vehicle_id}"): UserRole.ANALYST,
+    ("GET", "/api/realtime/trip-updates"): UserRole.ANALYST,
+    ("GET", "/api/realtime/alerts"): UserRole.ANALYST,
+    ("GET", "/api/realtime/summary"): UserRole.ANALYST,
+    ("GET", "/api/realtime/providers"): UserRole.ANALYST,
+
+    # Operator (data/realtime ingestion and snapshots)
+    ("POST", "/api/data/upload"): UserRole.OPERATOR,
+    ("POST", "/api/data/ingest"): UserRole.OPERATOR,
+    ("POST", "/api/data/demo"): UserRole.OPERATOR,
+    ("POST", "/api/data/etm/validate"): UserRole.OPERATOR,
+    ("POST", "/api/data/etm/ingest"): UserRole.OPERATOR,
+    ("POST", "/api/operations/disruptions"): UserRole.OPERATOR,
+    ("POST", "/api/monthly-data/upload"): UserRole.OPERATOR,
+    ("POST", "/api/passenger-data/upload"): UserRole.OPERATOR,
+    ("POST", "/api/realtime/ingest"): UserRole.OPERATOR,
+    ("POST", "/api/realtime/demo-snapshot"): UserRole.OPERATOR,
+    ("POST", "/api/realtime/providers/poll"): UserRole.OPERATOR,
+
+    # Administrator (retraining, migrations, database, storage health, benchmarks, webhook dispatch)
+    ("POST", "/api/train"): UserRole.ADMINISTRATOR,
+    ("POST", "/api/gtfs/upload"): UserRole.ADMINISTRATOR,
+    ("GET", "/api/db/health"): UserRole.ADMINISTRATOR,
+    ("GET", "/api/storage/health"): UserRole.ADMINISTRATOR,
+    ("GET", "/api/db/migrations"): UserRole.ADMINISTRATOR,
+    ("GET", "/api/quality/audit-logs"): UserRole.ADMINISTRATOR,
+    ("POST", "/api/quality/check-drift"): UserRole.ADMINISTRATOR,
+    ("GET", "/api/model/benchmark"): UserRole.ADMINISTRATOR,
+    ("POST", "/api/reports/webhook"): UserRole.ADMINISTRATOR,
+}
 
 
-def authorize_ai_chat(authorization: str | None = Header(default=None)) -> UserRole:
-    """Authorize AI chat requests, cleanly separating platform access control from OpenRouter keys.
-
-    1. Public Demo Mode: If unauthenticated (no Bearer token provided), public access is allowed
-       by default (read-only, rate-limited, grounded in transit telemetry).
-    2. Authenticated Operator: Valid Bearer token matching BUS_FORECAST_API_KEY / OPERATOR_KEY.
-    3. Authenticated Admin: Valid Bearer token matching BUS_FORECAST_ADMIN_KEY.
-    4. Invalid Token: If a token is supplied but incorrect, returns 401 Unauthorized.
-    5. Explicit Lockdown: If BUS_FORECAST_REQUIRE_AUTH=true AND BUS_FORECAST_ALLOW_PUBLIC_AI=false,
-       unauthenticated requests receive a 401 prompt to enter the operator access key.
-    """
-    require_auth = os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() in {"1", "true", "yes"}
-    allow_public_ai = os.getenv("BUS_FORECAST_ALLOW_PUBLIC_AI", "true").lower() in {"1", "true", "yes"}
-
-    expected_keys: dict[str, UserRole] = {}
-    for env_var, role in [
-        ("BUS_FORECAST_API_KEY", UserRole.OPERATOR),
-        ("BUS_FORECAST_OPERATOR_KEY", UserRole.OPERATOR),
-        ("BUS_FORECAST_ADMIN_KEY", UserRole.ADMINISTRATOR),
-        ("BUS_FORECAST_ANALYST_KEY", UserRole.ANALYST),
-    ]:
-        val = os.getenv(env_var)
-        if val and val.strip():
-            expected_keys[val.strip()] = role
-
-    token = None
-    if authorization:
-        parts = authorization.strip().split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-        elif len(parts) == 1:
-            token = parts[0]
-
-    # If caller supplied a token, validate it
-    if token:
-        if expected_keys and token in expected_keys:
-            return expected_keys[token]
-        if expected_keys:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid API access key. Enter the correct API access key in app settings.",
-            )
-
-    # Unauthenticated caller: check public demo access
-    if not require_auth or allow_public_ai:
-        return UserRole.PUBLIC
-
-    # Public AI disabled and auth required
-    if not expected_keys:
-        raise HTTPException(
-            status_code=503,
-            detail="Hosted API authentication is not configured on the server (BUS_FORECAST_API_KEY missing).",
-        )
-    raise HTTPException(
-        status_code=401,
-        detail="Enter the API access key in app settings to use the AI Copilot.",
-    )
+def authorize(authorization: str | None = Header(default=None)) -> AuthenticatedPrincipal:
+    """Require a configured bearer key with at least ANALYST role on hosted deployments."""
+    return require_role(UserRole.ANALYST)(authorization)
 
 
 def require_public_monthly_read() -> None:
-    """Keep the narrow public monthly read surface disabled unless explicitly enabled."""
-    enabled = os.getenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "false").strip().lower() in {"1", "true", "yes"}
+    """Keep the public monthly route explorer enabled by default unless explicitly disabled."""
+    enabled = os.getenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "true").strip().lower() in {"1", "true", "yes"}
     if not enabled:
         raise HTTPException(status_code=404, detail="Public monthly route access is disabled")
 
@@ -578,7 +628,7 @@ def status_payload() -> dict:
         result["horizon_days"] = PUBLIC_DEMO_CACHE.get("horizon_days")
         result["metrics"] = PUBLIC_DEMO_CACHE.get("metrics")
         result["forecasts"] = PUBLIC_DEMO_CACHE.get("forecasts", [])
-        result["forecast_mode"] = "machine_learning"
+        result["forecast_mode"] = PUBLIC_DEMO_CACHE.get("forecast_mode", "machine_learning")
         result["forecast_updated_at"] = PUBLIC_DEMO_CACHE.get("forecast_updated_at")
 
     try:
@@ -596,16 +646,21 @@ def status_payload() -> dict:
 def save_forecast(days: int, missing_days: str = "error") -> pd.DataFrame:
     if not DATA_PATH.exists():
         raise HTTPException(status_code=409, detail="Upload daily route counts or load demo data first")
+    mode = "weekday_average"
     try:
         if MODEL_PATH.exists():
             forecast = build_forecast(DATA_PATH, MODEL_PATH, days, missing_days)
+            import joblib
+
+            bundle = joblib.load(MODEL_PATH)
+            mode = bundle.get("forecast_strategy", "machine_learning")
         else:
             data = load_data(str(DATA_PATH))
             dense = complete_daily_series(data, missing_days=missing_days)
             forecast = weekday_average_forecast(dense, days)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    persist_forecast(forecast, "machine_learning" if MODEL_PATH.exists() else "weekday_average")
+    persist_forecast(forecast, mode)
     return forecast
 
 
@@ -663,25 +718,25 @@ def readiness() -> JSONResponse:
     )
 
 
-@app.get("/api/db/health", dependencies=[Depends(authorize)])
+@app.get("/api/db/health", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def get_db_health() -> dict:
     """Database connectivity and latency inspection."""
     return check_db_health()
 
 
-@app.get("/api/storage/health", dependencies=[Depends(authorize)])
+@app.get("/api/storage/health", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def get_storage_health() -> dict:
     """Storage directory, write permissions, and disk space."""
     return check_storage_health()
 
 
-@app.get("/api/db/migrations", dependencies=[Depends(authorize)])
+@app.get("/api/db/migrations", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def get_db_migrations() -> dict:
     """Database migration status and table availability."""
     return get_migration_status()
 
 
-@app.get("/api/status", dependencies=[Depends(authorize)])
+@app.get("/api/status", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_status() -> dict:
     return status_payload()
 
@@ -866,7 +921,6 @@ def public_demo_status(days: int = Query(default=7, ge=1, le=28)) -> dict:
     """Return a cached, read-only synthetic forecast without touching operator data."""
     if not isinstance(days, int):
         days = getattr(days, "default", 7)
-    global PUBLIC_DEMO_CACHE
     if PUBLIC_DEMO_CACHE is not None:
         return public_demo_forecast_for_days(days)
     with PUBLIC_DEMO_LOCK:
@@ -890,11 +944,6 @@ def public_demo_forecast_for_days(days: int) -> dict:
     model_path = PUBLIC_DEMO_ARTIFACTS.get("model") or MODEL_PATH
     if not data_path.exists() or not model_path.exists():
         raise HTTPException(status_code=503, detail="The synthetic demo model is not ready")
-    try:
-        forecast = build_forecast(data_path, model_path, days, "error")
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail="Could not generate the synthetic forecast horizon") from exc
-    return {**PUBLIC_DEMO_CACHE, "horizon_days": days, "forecasts": forecast.to_dict(orient="records")}
     try:
         forecast = build_forecast(data_path, model_path, days, "error")
     except (OSError, ValueError) as exc:
@@ -938,7 +987,7 @@ def public_demo_sample_csv() -> Response:
     )
 
 
-@app.post("/api/data/upload", dependencies=[Depends(authorize), Depends(protect_pipeline)])
+@app.post("/api/data/upload", dependencies=[Depends(require_role(UserRole.OPERATOR)), Depends(protect_pipeline)])
 def upload_data(
     file: UploadFile = File(...),
     missing_days: Literal["error", "zero"] = Form(default="error"),
@@ -1008,7 +1057,7 @@ def upload_data(
     return {"message": forecast_message, "status": status_payload()}
 
 
-@app.post("/api/data/ingest", dependencies=[Depends(authorize), Depends(protect_pipeline)])
+@app.post("/api/data/ingest", dependencies=[Depends(require_role(UserRole.OPERATOR)), Depends(protect_pipeline)])
 def ingest_daily_counts(request: DataIngestRequest) -> dict:
     """Idempotently upsert daily counts from a scheduled company export or integration."""
     source_system = request.source_system.strip()
@@ -1083,7 +1132,7 @@ def ingest_daily_counts(request: DataIngestRequest) -> dict:
     }
 
 
-@app.post("/api/data/demo", dependencies=[Depends(authorize), Depends(protect_pipeline)])
+@app.post("/api/data/demo", dependencies=[Depends(require_role(UserRole.OPERATOR)), Depends(protect_pipeline)])
 def load_demo_data() -> dict:
     sample = project_path("data/sample_daily_ridership.csv")
     if not sample.exists():
@@ -1101,7 +1150,7 @@ def load_demo_data() -> dict:
     return {"message": "Synthetic demo data loaded. Train it to generate a sample forecast.", "status": status_payload()}
 
 
-@app.post("/api/train", dependencies=[Depends(authorize), Depends(protect_pipeline)])
+@app.post("/api/train", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR)), Depends(protect_pipeline)])
 def train_model(request: TrainRequest) -> dict:
     if not DATA_PATH.exists():
         raise HTTPException(status_code=409, detail="Upload daily route counts or load demo data first")
@@ -1140,13 +1189,13 @@ def train_model(request: TrainRequest) -> dict:
     return {"message": "Model trained and forecast updated.", "training": api_safe(result), "status": status_payload()}
 
 
-@app.post("/api/forecast", dependencies=[Depends(authorize), Depends(protect_pipeline)])
+@app.post("/api/forecast", dependencies=[Depends(require_role(UserRole.ANALYST)), Depends(protect_pipeline)])
 def refresh_forecast(request: ForecastRequest) -> dict:
     forecast = save_forecast(request.days, request.missing_days)
     return {"message": "Forecast refreshed.", "rows": int(len(forecast)), "status": status_payload()}
 
 
-@app.get("/api/forecast.csv", dependencies=[Depends(authorize)])
+@app.get("/api/forecast.csv", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def download_forecast(route_id: str | None = Query(default=None, min_length=1, max_length=128)) -> Response:
     if not FORECAST_PATH.exists():
         content = "service_date,route_id,predicted_passengers,lower_90_approx,upper_90_approx\n"
@@ -1168,7 +1217,7 @@ def download_template() -> Response:
     return Response(content="service_date,route_id,passengers\n", media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="daily_route_counts_template.csv"'})
 
 
-@app.post("/api/gtfs/upload", dependencies=[Depends(authorize)])
+@app.post("/api/gtfs/upload", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def upload_gtfs_feed(
     file: UploadFile = File(...),
     feed_id: str | None = Form(default=None),
@@ -1269,7 +1318,7 @@ def get_gtfs_stops(
         return []
 
 
-@app.get("/api/realtime/vehicles")
+@app.get("/api/realtime/vehicles", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_realtime_vehicles(
     route_id: str | None = None,
     min_lat: float | None = None,
@@ -1291,7 +1340,7 @@ def get_realtime_vehicles(
     )
 
 
-@app.get("/api/realtime/vehicles/{vehicle_id}")
+@app.get("/api/realtime/vehicles/{vehicle_id}", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_realtime_vehicle(vehicle_id: str) -> dict[str, Any]:
     service = get_realtime_service()
     v = service.get_vehicle(vehicle_id)
@@ -1300,7 +1349,7 @@ def get_realtime_vehicle(vehicle_id: str) -> dict[str, Any]:
     return v
 
 
-@app.get("/api/realtime/trip-updates")
+@app.get("/api/realtime/trip-updates", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_realtime_trip_updates(
     route_id: str | None = None,
     trip_id: str | None = None,
@@ -1313,7 +1362,7 @@ def get_realtime_trip_updates(
     return service.get_trip_updates(route_id=clean_route, trip_id=clean_trip, agency_id=clean_agency)
 
 
-@app.get("/api/realtime/alerts")
+@app.get("/api/realtime/alerts", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_realtime_alerts(
     route_id: str | None = None,
     stop_id: str | None = None,
@@ -1326,14 +1375,14 @@ def get_realtime_alerts(
     return service.get_alerts(route_id=clean_route, stop_id=clean_stop, agency_id=clean_agency)
 
 
-@app.get("/api/realtime/summary")
+@app.get("/api/realtime/summary", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_realtime_summary(agency_id: str | None = None) -> dict[str, Any]:
     clean_agency = agency_id if isinstance(agency_id, str) else None
     service = get_realtime_service()
     return service.get_summary(agency_id=clean_agency)
 
 
-@app.post("/api/realtime/ingest", dependencies=[Depends(authorize)])
+@app.post("/api/realtime/ingest", dependencies=[Depends(require_role(UserRole.OPERATOR))])
 def ingest_realtime_feed(
     file: UploadFile = File(default=None),
     agency_id: str | None = Form(default="default"),
@@ -1351,7 +1400,7 @@ def ingest_realtime_feed(
         raise HTTPException(status_code=400, detail=f"Failed to parse GTFS-RT feed: {exc}")
 
 
-@app.post("/api/realtime/demo-snapshot")
+@app.post("/api/realtime/demo-snapshot", dependencies=[Depends(require_role(UserRole.OPERATOR))])
 def generate_realtime_demo_snapshot(agency_id: str = "CTA") -> dict[str, Any]:
     """Provide a labeled synthetic live fleet snapshot when no live provider feed is configured."""
     service = get_realtime_service()
@@ -1363,22 +1412,89 @@ def generate_realtime_demo_snapshot(agency_id: str = "CTA") -> dict[str, Any]:
     }
 
 
-@app.get("/api/forecast/realtime/{route_id}")
+@app.get("/api/forecast/realtime/{route_id}", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_route_realtime_forecast(
     route_id: str,
     baseline_passengers: float | None = None,
 ) -> dict[str, Any]:
-    base_val = float(baseline_passengers) if baseline_passengers is not None else 2500.0
+    base_val = float(baseline_passengers) if baseline_passengers is not None else None
+    if base_val is None:
+        if FORECAST_PATH.exists():
+            try:
+                fdf = pd.read_csv(FORECAST_PATH)
+                match = fdf[fdf["route_id"].astype(str) == str(route_id)]
+                if not match.empty:
+                    base_val = float(match.iloc[0]["predicted_passengers"])
+            except Exception:
+                pass
+        if base_val is None and PUBLIC_DEMO_CACHE is not None:
+            try:
+                for fc in PUBLIC_DEMO_CACHE.get("forecasts", []):
+                    if str(fc.get("route_id")) == str(route_id):
+                        base_val = float(fc.get("predicted_passengers", 0.0))
+                        break
+            except Exception:
+                pass
+        if base_val is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No trained daily forecast baseline available for route '{route_id}'. Please train a model or specify baseline_passengers.",
+            )
+
     forecast = build_intraday_route_forecast(route_id=route_id, daily_baseline_passengers=base_val)
     return forecast.to_dict()
 
 
-@app.get("/api/forecast/intraday")
+@app.get("/api/forecast/intraday", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_intraday_network_curve() -> dict[str, Any]:
-    return build_network_intraday_curve()
+    network_base = None
+    if FORECAST_PATH.exists():
+        try:
+            fdf = pd.read_csv(FORECAST_PATH)
+            if not fdf.empty and "predicted_passengers" in fdf.columns:
+                first_date = fdf["service_date"].min()
+                day_slice = fdf[fdf["service_date"] == first_date]
+                network_base = float(day_slice["predicted_passengers"].sum())
+        except Exception:
+            pass
+    if network_base is None and PUBLIC_DEMO_CACHE is not None:
+        try:
+            forecasts = PUBLIC_DEMO_CACHE.get("forecasts", [])
+            if forecasts:
+                first_date = min(fc["service_date"] for fc in forecasts if "service_date" in fc)
+                network_base = float(sum(fc["predicted_passengers"] for fc in forecasts if fc.get("service_date") == first_date))
+        except Exception:
+            pass
+
+    return build_network_intraday_curve(network_daily_base=network_base if network_base is not None else 50000.0)
 
 
-@app.get("/api/operations/alerts")
+@app.get("/api/forecast/accuracy")
+def get_forecast_accuracy_endpoint(
+    window_days: int = 30,
+    agency_id: str | None = None,
+    principal: AuthenticatedPrincipal = Depends(require_role(UserRole.ANALYST)),
+) -> dict[str, Any]:
+    """Compute rolling forecast accuracy (WAPE, bias) per route and lead day vs seasonal naive."""
+    effective_agency = enforce_agency_access(principal, agency_id)
+    with get_db_session() as session:
+        return compute_forecast_accuracy(session, agency_id=effective_agency, window_days=window_days)
+
+
+@app.get("/api/model/registry")
+def get_model_registry_endpoint(
+    status: str | None = None,
+    agency_id: str | None = None,
+    principal: AuthenticatedPrincipal = Depends(require_role(UserRole.ANALYST)),
+) -> list[dict[str, Any]]:
+    """List registered candidate, active, and retired models in the Model Registry."""
+    effective_agency = enforce_agency_access(principal, agency_id)
+    with get_db_session() as session:
+        return list_model_artifacts(session, agency_id=effective_agency, status=status)
+
+
+
+@app.get("/api/operations/alerts", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_operations_alerts(
     route_id: str | None = None,
     severity: str | None = None,
@@ -1394,7 +1510,43 @@ def get_operations_alerts(
     return [a.to_dict() for a in filtered]
 
 
-@app.get("/api/operations/dispatch-recommendations")
+class DisruptionCreateRequest(BaseModel):
+    route: str = Field(..., max_length=64, description="Route ID affected")
+    start_time: str = Field(..., max_length=64, description="ISO 8601 start timestamp or YYYY-MM-DD HH:MM")
+    end_time: str = Field(..., max_length=64, description="ISO 8601 end timestamp or YYYY-MM-DD HH:MM")
+    severity: str = Field(default="MEDIUM", max_length=32, description="LOW, MEDIUM, HIGH, CRITICAL")
+    impact_factor: float = Field(default=0.7, ge=0.0, le=5.0, description="Demand multiplier during disruption")
+    description: str | None = Field(default="", max_length=255, description="Reason or notes")
+    agency_id: str = Field(default="default", max_length=64)
+
+
+@app.post("/api/operations/disruptions", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def create_service_disruption(req: DisruptionCreateRequest) -> dict[str, Any]:
+    """Register transit service disruption and adjust intraday demand forecasts."""
+    dis = register_disruption(
+        route_id=req.route,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        severity=req.severity,
+        impact_factor=req.impact_factor,
+        description=req.description or "",
+        agency_id=req.agency_id,
+    )
+    return {"message": "Service disruption registered successfully", "disruption": dis.to_dict()}
+
+
+@app.get("/api/operations/disruptions", dependencies=[Depends(require_role(UserRole.ANALYST))])
+def get_service_disruptions(
+    route_id: str | None = None,
+    agency_id: str | None = None,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    """List registered transit service disruptions."""
+    disruptions = list_disruptions(route_id=route_id, agency_id=agency_id, active_only=active_only)
+    return [d.to_dict() for d in disruptions]
+
+
+@app.get("/api/operations/dispatch-recommendations", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_dispatch_recommendations(
     route_id: str | None = None,
     priority: str | None = None,
@@ -1410,14 +1562,14 @@ def get_dispatch_recommendations(
     return [r.to_dict() for r in filtered]
 
 
-@app.get("/api/operations/metrics")
+@app.get("/api/operations/metrics", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_operations_metrics(agency_id: str | None = None) -> dict[str, Any]:
     engine = get_operations_engine()
     _, _, metrics = engine.evaluate_fleet(agency_id=agency_id)
     return metrics.to_dict()
 
 
-@app.get("/api/quality/drift-status")
+@app.get("/api/quality/drift-status", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_quality_drift_status() -> dict[str, Any]:
     monitor = get_quality_monitor()
     df = None
@@ -1430,13 +1582,13 @@ def get_quality_drift_status() -> dict[str, Any]:
     return rep.to_dict()
 
 
-@app.get("/api/quality/audit-logs", dependencies=[Depends(authorize)])
+@app.get("/api/quality/audit-logs", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def get_quality_audit_logs(limit: int = 50) -> list[dict[str, Any]]:
     monitor = get_quality_monitor()
     return monitor.get_audit_logs(limit=limit)
 
 
-@app.post("/api/quality/check-drift", dependencies=[Depends(authorize)])
+@app.post("/api/quality/check-drift", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def check_quality_drift() -> dict[str, Any]:
     monitor = get_quality_monitor()
     df = None
@@ -1451,36 +1603,58 @@ def check_quality_drift() -> dict[str, Any]:
 
 @app.get("/api/auth/roles")
 def get_auth_roles(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    role = resolve_role(authorization)
+    principal = resolve_principal(authorization)
+    role = principal.role
     permissions = {
         UserRole.PUBLIC: ["read_public_demo", "read_gtfs_schedules", "read_health"],
+        UserRole.ANALYST: [
+            "read_public_demo",
+            "read_gtfs_schedules",
+            "read_health",
+            "read_forecasts",
+            "read_realtime_telemetry",
+            "read_operations_board",
+            "read_occupancy",
+            "read_reports",
+        ],
         UserRole.OPERATOR: [
             "read_public_demo",
             "read_gtfs_schedules",
             "read_health",
             "read_forecasts",
-            "upload_daily_counts",
             "read_realtime_telemetry",
             "read_operations_board",
+            "read_occupancy",
+            "read_reports",
+            "upload_daily_counts",
+            "ingest_realtime_telemetry",
+            "upload_passenger_data",
         ],
         UserRole.ADMINISTRATOR: [
             "read_public_demo",
             "read_gtfs_schedules",
             "read_health",
             "read_forecasts",
-            "upload_daily_counts",
             "read_realtime_telemetry",
             "read_operations_board",
+            "read_occupancy",
+            "read_reports",
+            "upload_daily_counts",
+            "ingest_realtime_telemetry",
+            "upload_passenger_data",
             "train_models",
             "upload_gtfs_schedule",
             "upload_monthly_data",
             "access_quality_drift",
             "manage_database",
+            "run_benchmarks",
+            "dispatch_webhooks",
         ],
     }
     return {
         "role": role.value,
-        "is_authenticated": role != UserRole.PUBLIC,
+        "is_authenticated": principal.is_authenticated,
+        "agency": principal.agency,
         "permissions": permissions.get(role, []),
     }
 
@@ -1499,7 +1673,7 @@ class WebhookNotificationRequest(BaseModel):
     alert_payload: dict[str, Any]
 
 
-@app.post("/api/passenger-data/upload", dependencies=[Depends(authorize)])
+@app.post("/api/passenger-data/upload", dependencies=[Depends(require_role(UserRole.OPERATOR))])
 def upload_passenger_data(
     file: UploadFile = File(...),
     agency_id: str = "default",
@@ -1525,7 +1699,46 @@ def upload_passenger_data(
     return {"message": "Passenger data ingested successfully", "validation": val_res.to_dict(), "result": result}
 
 
-@app.get("/api/occupancy/trip/{trip_id}")
+@app.post("/api/data/etm/validate", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def validate_etm_data(
+    file: UploadFile = File(...),
+    agency_id: str = "default",
+) -> dict[str, Any]:
+    """Validate raw ETM ticketing logs and preview aggregated hourly passenger buckets."""
+    content = file.file.read(25 * 1024 * 1024 + 1)
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds maximum size of 25 MB")
+    hourly_df, val_res = parse_and_aggregate_etm_data(content, agency_id=agency_id)
+    if not val_res.is_valid:
+        raise HTTPException(status_code=422, detail={"errors": val_res.error_samples, "validation": val_res.to_dict()})
+    return {"message": "ETM ticketing data validated successfully", "validation": val_res.to_dict(), "preview_rows": hourly_df.head(10).to_dict(orient="records")}
+
+
+@app.post("/api/data/etm/ingest", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def ingest_etm_data(
+    file: UploadFile = File(...),
+    agency_id: str = "default",
+) -> dict[str, Any]:
+    """Parse, aggregate into hourly buckets, and ingest ETM ticketing transactions into daily records."""
+    content = file.file.read(25 * 1024 * 1024 + 1)
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds maximum size of 25 MB")
+
+    hourly_df, val_res = parse_and_aggregate_etm_data(content, agency_id=agency_id)
+    if not val_res.is_valid:
+        raise HTTPException(status_code=422, detail={"errors": val_res.error_samples, "validation": val_res.to_dict()})
+
+    with get_db_session() as session:
+        result = ingest_etm_dataset(
+            session=session,
+            hourly_df=hourly_df,
+            agency_id=agency_id,
+            source_filename=file.filename or "etm_upload.csv",
+        )
+    return {"message": "ETM ticketing data ingested successfully", "validation": val_res.to_dict(), "result": result}
+
+
+@app.get("/api/occupancy/trip/{trip_id}", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_trip_occupancy(
     trip_id: str,
     agency_id: str = "default",
@@ -1544,7 +1757,7 @@ def get_trip_occupancy(
     return profile.to_dict()
 
 
-@app.get("/api/occupancy/route/{route_id}")
+@app.get("/api/occupancy/route/{route_id}", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_route_occupancy_profile(
     route_id: str,
     agency_id: str = "default",
@@ -1554,22 +1767,59 @@ def get_route_occupancy_profile(
         return compute_route_capacity_profile(session=session, route_id=route_id, agency_id=agency_id)
 
 
-@app.get("/api/model/benchmark")
+BENCHMARK_LOCK = threading.Lock()
+_BENCHMARK_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
+
+
+@app.get("/api/model/benchmark", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def get_model_benchmark(
     horizon: int = 7,
     folds: int = 1,
 ) -> dict[str, Any]:
-    """Evaluate multi-model benchmark comparing HistGradientBoosting, RandomForest, and SeasonalNaive."""
-    if not DATA_PATH.exists():
-        raise HTTPException(status_code=404, detail="No historical passenger dataset available for model benchmarking")
+    """Evaluate multi-model benchmark with concurrency lock, dataset SHA-256 caching, and admin authorization."""
+    acquired = BENCHMARK_LOCK.acquire(blocking=False)
+    if not acquired:
+        raise HTTPException(
+            status_code=429,
+            detail="A model benchmark execution is already in progress. Concurrent benchmarks are restricted.",
+        )
+
     try:
-        data = load_data(str(DATA_PATH))
-        return run_multi_model_benchmark(data, horizon=horizon, folds=folds, candidate_models=["hist_gradient_boosting", "random_forest"])
+        data_path = PUBLIC_DEMO_ARTIFACTS.get("data") or DATA_PATH
+        if not data_path.exists():
+            sample = project_path("data/sample_daily_ridership.csv")
+            if sample.exists():
+                data_path = sample
+            else:
+                raise HTTPException(status_code=404, detail="No historical passenger dataset available for model benchmarking")
+
+        data_bytes = data_path.read_bytes()
+        data_hash = hashlib.sha256(data_bytes).hexdigest()
+        cache_key = (data_hash, horizon, folds)
+
+        if cache_key in _BENCHMARK_CACHE:
+            cached = dict(_BENCHMARK_CACHE[cache_key])
+            cached["cached"] = True
+            return cached
+
+        data = load_data(str(data_path))
+        result = run_multi_model_benchmark(
+            data,
+            horizon=horizon,
+            folds=folds,
+            candidate_models=["hist_gradient_boosting", "random_forest"],
+        )
+        _BENCHMARK_CACHE[cache_key] = result
+        return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        BENCHMARK_LOCK.release()
 
 
-@app.post("/api/simulator/evaluate")
+@app.post("/api/simulator/evaluate", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def evaluate_service_simulation(request: SimulationRequest) -> dict[str, Any]:
     """Execute what-if planning simulation comparing planned frequency/capacity against forecast demand."""
     try:
@@ -1587,7 +1837,7 @@ def evaluate_service_simulation(request: SimulationRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.get("/api/reports/daily")
+@app.get("/api/reports/daily", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_daily_report(
     date: str | None = None,
     agency_id: str = "default",
@@ -1598,7 +1848,7 @@ def get_daily_report(
         return generate_daily_passenger_report(session=session, service_date=target_date, agency_id=agency_id)
 
 
-@app.get("/api/reports/daily/csv")
+@app.get("/api/reports/daily/csv", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def download_daily_report_csv(
     date: str | None = None,
     agency_id: str = "default",
@@ -1615,30 +1865,33 @@ def download_daily_report_csv(
     )
 
 
-@app.get("/api/reports/capacity-risk")
+@app.get("/api/reports/capacity-risk", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_capacity_risk_report(agency_id: str = "default") -> dict[str, Any]:
     """Retrieve operational capacity and overcrowding risk incidents."""
     with get_db_session() as session:
         return generate_capacity_risk_report(session=session, agency_id=agency_id)
 
 
-@app.post("/api/reports/webhook", dependencies=[Depends(authorize)])
+@app.post("/api/reports/webhook", dependencies=[Depends(require_role(UserRole.ADMINISTRATOR))])
 def trigger_alert_webhook(request: WebhookNotificationRequest) -> dict[str, Any]:
-    """Dispatch operational alert to a configured webhook receiver."""
+    """Dispatch operational alert to a configured webhook receiver with SSRF validation."""
+    is_safe, reason = is_safe_webhook_url(request.webhook_url)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook URL: {reason}")
     success = send_alert_webhook(request.webhook_url, request.alert_payload)
     if not success:
         raise HTTPException(status_code=502, detail="Failed to deliver alert payload to specified webhook URL")
     return {"status": "DELIVERED", "webhook_url": request.webhook_url}
 
 
-@app.get("/api/realtime/providers")
+@app.get("/api/realtime/providers", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def list_realtime_providers() -> list[dict[str, Any]]:
     """List registered GTFS-RT feed providers and connection status."""
     registry = get_provider_registry()
     return registry.list_providers()
 
 
-@app.post("/api/realtime/providers/poll", dependencies=[Depends(authorize)])
+@app.post("/api/realtime/providers/poll", dependencies=[Depends(require_role(UserRole.OPERATOR))])
 def poll_realtime_provider(agency_id: str = "CTA") -> dict[str, Any]:
     """Trigger manual polling of a registered external GTFS-RT feed provider."""
     registry = get_provider_registry()
@@ -1671,7 +1924,8 @@ async def ai_chat(
 ) -> Any:
     """Conversational AI assistant grounded in real transit demand telemetry."""
     # Check platform authorization (supports public demo mode with rate limiting)
-    role = authorize_ai_chat(authorization)
+    principal = authorize_ai_chat(authorization)
+    role = principal.role
 
     from .ai_assistant import process_chat_message
 
@@ -1695,6 +1949,9 @@ async def ai_chat(
             "EMPTY_MESSAGE": 422,
             "MODEL_UNAVAILABLE": 502,
             "NETWORK_ERROR": 502,
+            "PROVIDER_BUSY": 503,
+            "INVALID_RESPONSE": 502,
+            "EMPTY_RESPONSE": 502,
         }
         code = status_code_map.get(result.get("error_code"), 500)
         return JSONResponse(status_code=code, content=result)

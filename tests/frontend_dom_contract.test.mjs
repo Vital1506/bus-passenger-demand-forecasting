@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [app, html, serviceWorker] = await Promise.all([
+const [app, html, sw] = await Promise.all([
   readFile(new URL("../web/app.js", import.meta.url), "utf8"),
   readFile(new URL("../web/index.html", import.meta.url), "utf8"),
   readFile(new URL("../web/sw.js", import.meta.url), "utf8"),
@@ -87,18 +87,21 @@ test("ai assistant declares accessible toggle, chat panel, and interactive contr
   assert.match(app, /\/api\/ai\/status/);
 });
 
-
-test("service worker invalidates stale app cache and never caches live health or API responses", () => {
-  assert.match(serviceWorker, /bus-demand-ui-v11/);
-  assert.match(serviceWorker, /url\.pathname === ["']\/health["']/);
-  assert.match(serviceWorker, /url\.pathname === ["']\/ready["']/);
-  assert.match(serviceWorker, /url\.pathname\.startsWith\(["']\/api\/["']\)/);
-  assert.match(serviceWorker, /\/static\/app\.js\?v=11/);
-  assert.match(html, /src=["']\/static\/app\.js\?v=11["']/);
+test("service worker and app script employ cache-busting and bypass health/ready checks", () => {
+  assert.match(html, /<script type="module" src="\/static\/app\.js\?v=\d+"><\/script>/);
+  assert.match(sw, /const CACHE = "bus-demand-ui-v11";/);
+  assert.match(sw, /url\.pathname === ["']\/health["']/);
+  assert.match(sw, /url\.pathname === ["']\/ready["']/);
+  assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
+  assert.match(sw, /\/static\/app\.js\?v=11/);
 });
 
-
-test("startup waits for forecast readiness instead of accepting health-only responses", () => {
+test("startup waits for actual forecast readiness and retries when it is unavailable", () => {
   assert.match(app, /ready\.status === "ready" && ready\.forecasts_ready === true/);
   assert.match(app, /Forecast service is still initializing/);
+  assert.match(app, /waiting for forecast readiness/);
+});
+
+test("service worker caches only successful non-opaque static responses", () => {
+  assert.match(sw, /response\.ok && response\.type !== "opaque"/);
 });

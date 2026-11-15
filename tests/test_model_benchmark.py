@@ -42,6 +42,18 @@ def test_compute_metrics():
     assert round(res["wape"], 4) == round(30.0 / 600.0, 4)
 
 
+def test_benchmark_rejects_unknown_candidate_models():
+    data = load_data("data/sample_daily_ridership.csv")
+    with pytest.raises(ValueError, match="Unsupported candidate model"):
+        run_multi_model_benchmark(data, horizon=7, folds=1, candidate_models=["not-a-real-model"])
+
+
+def test_benchmark_rejects_missing_daily_observations():
+    data = load_data("data/sample_daily_ridership.csv").drop(index=10).reset_index(drop=True)
+    with pytest.raises(ValueError, match="Missing route/date observations"):
+        run_multi_model_benchmark(data, horizon=7, folds=1, candidate_models=[])
+
+
 def test_multi_model_benchmark_execution():
     data = load_data("data/sample_daily_ridership.csv")
     res = run_multi_model_benchmark(
@@ -59,3 +71,59 @@ def test_multi_model_benchmark_execution():
     # Check champion flag exists
     champions = [e for e in res["leaderboard"] if e["is_champion"]]
     assert len(champions) == 1
+
+
+def test_b7_empirical_intervals_raises_on_empty_residuals():
+    """Verify B7: empty residuals raises ValueError instead of returning magic 50.0 fallback."""
+    with pytest.raises(ValueError, match="Insufficient data"):
+        calibrate_empirical_intervals(np.array([]))
+
+
+def test_b6_dynamic_model_versioning(monkeypatch):
+    """Verify B6: model version is derived dynamically, not hardcoded."""
+    from src.train import get_model_version
+
+    # Explicit override
+    monkeypatch.setenv("BUS_FORECAST_MODEL_VERSION", "2.1.0-custom")
+    assert get_model_version() == "2.1.0-custom"
+
+    # Dynamic date-based default
+    monkeypatch.delenv("BUS_FORECAST_MODEL_VERSION", raising=False)
+    ver = get_model_version()
+    assert ver.startswith("1.0.0+")
+    assert len(ver) > 10
+
+
+def test_conformal_lead_day_intervals():
+    from src.model_benchmark import calibrate_lead_day_conformal_intervals
+
+    residuals_by_lead = {
+        1: [-20, -10, 0, 5, 10, 15, -5, 8, -12, 18],
+        7: [-80, -40, 10, 30, 60, -50, 75, -90, 85, -20],
+    }
+    bounds = calibrate_lead_day_conformal_intervals(residuals_by_lead, coverage_level=0.90)
+    assert 1 in bounds
+    assert 7 in bounds
+    # Lead day 7 should have a wider interval span than lead day 1
+    span_1 = bounds[1]["upper_offset"] - bounds[1]["lower_offset"]
+    span_7 = bounds[7]["upper_offset"] - bounds[7]["lower_offset"]
+    assert span_7 > span_1
+
+
+def test_cold_start_route_forecast():
+    from src.model_benchmark import cold_start_route_forecast
+
+    history = pd.DataFrame({
+        "service_date": ["2026-11-01", "2026-11-02", "2026-11-03"],
+        "route_id": ["R1", "R1", "R1"],
+        "passengers": [400.0, 420.0, 410.0],
+    })
+    target_dates = ["2026-11-09", "2026-11-10"]
+    cold = cold_start_route_forecast("NEW_ROUTE_99", target_dates, history, scheduled_trips_per_day=40)
+    assert len(cold) == 2
+    assert cold[0]["route_id"] == "NEW_ROUTE_99"
+    assert cold[0]["is_cold_start"] is True
+    assert cold[0]["predicted_passengers"] > 0
+    assert cold[0]["lower_90"] < cold[0]["predicted_passengers"] < cold[0]["upper_90"]
+
+

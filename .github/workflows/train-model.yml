@@ -46,7 +46,7 @@ jobs:
         id: dataset
         shell: bash
         env:
-          DATASET: ${{ inputs.dataset || 'mta' }}
+          DATASET: ${{ inputs.dataset || 'sample' }}
           MTA_ROUTE: ${{ inputs.route || 'M15' }}
         run: |
           mkdir -p artifacts

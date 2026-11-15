@@ -9,7 +9,7 @@ import joblib
 import pandas as pd
 
 from .forecasting import complete_daily_series, load_data
-from .modeling import recursive_forecast
+from .modeling import recursive_forecast, seasonal_naive_forecast
 
 
 def build_forecast(
@@ -34,10 +34,18 @@ def build_forecast(
     unknown = routes - trained_routes
     if unknown:
         raise ValueError(f"Input includes routes absent during training: {', '.join(sorted(unknown))}. Train with sufficient history for them first.")
-    forecast = recursive_forecast(bundle["model"], history, days)
+    strategy = bundle.get("forecast_strategy", "machine_learning")
+    if strategy == "machine_learning":
+        forecast = recursive_forecast(bundle["model"], history, days)
+    elif strategy == "seasonal_naive":
+        forecast = seasonal_naive_forecast(history, days).rename(columns={"baseline": "predicted_passengers"})
+    else:
+        raise ValueError(f"Unsupported forecast strategy in model bundle: {strategy}")
+
     forecast["service_date"] = pd.to_datetime(forecast["service_date"])
-    bands = bundle["route_error_band_90"]
-    forecast["error_band_90"] = forecast["route_id"].map(bands).fillna(bundle["global_error_band_90"])
+    bands = bundle.get("route_error_band_90", {})
+    global_band = float(bundle.get("global_error_band_90", 0.0))
+    forecast["error_band_90"] = forecast["route_id"].map(bands).fillna(global_band)
     forecast["lower_90_approx"] = (forecast["predicted_passengers"] - forecast["error_band_90"]).clip(lower=0).round(2)
     forecast["upper_90_approx"] = (forecast["predicted_passengers"] + forecast["error_band_90"]).round(2)
     forecast["predicted_passengers"] = forecast["predicted_passengers"].round(2)

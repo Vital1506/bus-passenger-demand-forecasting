@@ -361,3 +361,251 @@ def ingest_apc_dataset(
         )
         session.commit()
         raise exc
+
+
+@dataclass
+class ETMValidationResult:
+    is_valid: bool
+    total_transactions: int = 0
+    valid_transactions: int = 0
+    rejected_transactions: int = 0
+    aggregated_hourly_buckets: int = 0
+    total_boardings: int = 0
+    routes_detected: list[str] = field(default_factory=list)
+    date_range: tuple[str, str] | None = None
+    error_samples: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "is_valid": self.is_valid,
+            "total_transactions": self.total_transactions,
+            "valid_transactions": self.valid_transactions,
+            "rejected_transactions": self.rejected_transactions,
+            "aggregated_hourly_buckets": self.aggregated_hourly_buckets,
+            "total_boardings": self.total_boardings,
+            "routes_detected": self.routes_detected,
+            "date_range": self.date_range,
+            "error_samples": self.error_samples[:15],
+        }
+
+
+def parse_and_aggregate_etm_data(
+    raw_content: bytes | str | pd.DataFrame,
+    agency_id: str = "default",
+) -> tuple[pd.DataFrame, ETMValidationResult]:
+    """Parse raw Electronic Ticketing Machine (ETM) transaction logs and aggregate into hourly boardings."""
+    if isinstance(raw_content, pd.DataFrame):
+        df = raw_content.copy()
+    else:
+        if isinstance(raw_content, bytes):
+            text = raw_content.decode("utf-8-sig", errors="replace")
+        else:
+            text = str(raw_content)
+        try:
+            df = pd.read_csv(io.StringIO(text))
+        except Exception as exc:
+            return pd.DataFrame(), ETMValidationResult(
+                is_valid=False,
+                error_samples=[f"Malformed CSV syntax: {exc}"]
+            )
+
+    if df.empty:
+        return pd.DataFrame(), ETMValidationResult(
+            is_valid=False,
+            error_samples=["Uploaded ETM file is empty"]
+        )
+
+    # Normalize column names
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+
+    # Map vendor-specific column synonyms
+    header_mapping = {
+        "route": "route_id",
+        "line": "route_id",
+        "route_no": "route_id",
+        "timestamp": "transaction_time",
+        "datetime": "transaction_time",
+        "issue_time": "transaction_time",
+        "tap_time": "transaction_time",
+        "ticket_time": "transaction_time",
+        "time": "transaction_time",
+        "ticket_id": "ticket_id",
+        "transaction_id": "ticket_id",
+        "ticket_no": "ticket_id",
+        "quantity": "boardings",
+        "passengers": "boardings",
+        "passenger_count": "boardings",
+        "count": "boardings",
+        "stop": "stop_id",
+        "stop_code": "stop_id",
+        "stage": "stop_id",
+        "station_id": "stop_id",
+        "vehicle": "vehicle_id",
+        "bus_id": "vehicle_id",
+        "machine_id": "vehicle_id",
+    }
+    df = df.rename(columns={k: v for k, v in header_mapping.items() if k in df.columns and v not in df.columns})
+
+    errors = []
+    total = len(df)
+
+    if "route_id" not in df.columns:
+        errors.append("Missing required route identifier column ('route_id' or 'route')")
+        return pd.DataFrame(), ETMValidationResult(
+            is_valid=False,
+            total_transactions=total,
+            rejected_transactions=total,
+            error_samples=errors,
+        )
+
+    if "transaction_time" not in df.columns:
+        errors.append("Missing required transaction timestamp column ('timestamp', 'transaction_time', 'datetime')")
+        return pd.DataFrame(), ETMValidationResult(
+            is_valid=False,
+            total_transactions=total,
+            rejected_transactions=total,
+            error_samples=errors,
+        )
+
+    # 1. Clean route_id
+    df["route_id"] = df["route_id"].astype(str).str.strip()
+    valid_route_mask = ~df["route_id"].isin(["", "nan", "none", "null"])
+
+    # 2. Parse timestamps
+    df["parsed_time"] = pd.to_datetime(df["transaction_time"], errors="coerce")
+    valid_time_mask = df["parsed_time"].notna()
+
+    # 3. Clean quantities / boardings
+    if "boardings" in df.columns:
+        boardings_numeric = pd.to_numeric(df["boardings"], errors="coerce").fillna(1).astype(int)
+        df["boardings"] = np.maximum(1, boardings_numeric)
+    else:
+        df["boardings"] = 1
+
+    valid_mask = valid_route_mask & valid_time_mask
+    valid_df = df[valid_mask].copy()
+    rejected_count = total - len(valid_df)
+
+    if rejected_count > 0:
+        errors.append(f"Rejected {rejected_count} transactions due to invalid route_id or unparseable timestamp")
+
+    if valid_df.empty:
+        return pd.DataFrame(), ETMValidationResult(
+            is_valid=False,
+            total_transactions=total,
+            valid_transactions=0,
+            rejected_transactions=total,
+            error_samples=errors,
+        )
+
+    # Extract service_date and hour
+    valid_df["service_date"] = valid_df["parsed_time"].dt.date
+    valid_df["hour"] = valid_df["parsed_time"].dt.hour
+    valid_df["agency_id"] = agency_id
+
+    # Group by (agency_id, route_id, service_date, hour)
+    ticket_col = "ticket_id" if "ticket_id" in valid_df.columns else "boardings"
+    grouped = valid_df.groupby(["agency_id", "route_id", "service_date", "hour"]).agg(
+        boardings=("boardings", "sum"),
+        transaction_count=(ticket_col, "count"),
+    ).reset_index()
+
+    # Sort
+    grouped = grouped.sort_values(by=["route_id", "service_date", "hour"]).reset_index(drop=True)
+
+    date_min = str(grouped["service_date"].min())
+    date_max = str(grouped["service_date"].max())
+    routes = sorted([str(r) for r in grouped["route_id"].unique()])
+    total_boardings = int(grouped["boardings"].sum())
+
+    res = ETMValidationResult(
+        is_valid=True,
+        total_transactions=total,
+        valid_transactions=len(valid_df),
+        rejected_transactions=rejected_count,
+        aggregated_hourly_buckets=len(grouped),
+        total_boardings=total_boardings,
+        routes_detected=routes,
+        date_range=(date_min, date_max),
+        error_samples=errors,
+    )
+    return grouped, res
+
+
+def aggregate_etm_to_daily(etm_hourly_df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate ETM hourly boardings dataframe into daily passenger totals for forecasting models."""
+    if etm_hourly_df.empty:
+        return pd.DataFrame(columns=["agency_id", "route_id", "service_date", "boardings"])
+    daily = etm_hourly_df.groupby(["agency_id", "route_id", "service_date"]).agg(
+        boardings=("boardings", "sum")
+    ).reset_index()
+    daily = daily.sort_values(by=["route_id", "service_date"]).reset_index(drop=True)
+    return daily
+
+
+def ingest_etm_dataset(
+    session: Session,
+    hourly_df: pd.DataFrame,
+    agency_id: str = "default",
+    source_filename: str = "etm_upload.csv",
+) -> dict[str, Any]:
+    """Ingest aggregated ETM dataset into relational daily records."""
+    if hourly_df.empty:
+        return {"status": "SKIPPED", "records_ingested": 0, "message": "No valid ETM records to ingest"}
+
+    daily_df = aggregate_etm_to_daily(hourly_df)
+    job_id = f"JOB-ETM-{uuid.uuid4().hex[:12].upper()}"
+    content_bytes = daily_df.to_csv(index=False).encode("utf-8")
+    sha256_hash = hashlib.sha256(content_bytes).hexdigest()
+
+    create_import_job(
+        session=session,
+        job_id=job_id,
+        job_type="etm_batch",
+        source_filename=source_filename,
+        sha256_hash=sha256_hash,
+        agency_id=agency_id,
+    )
+
+    try:
+        inserted_daily, updated_daily = upsert_daily_counts(
+            session=session,
+            df=daily_df,
+            agency_id=agency_id,
+            source_system="etm",
+        )
+        record_audit_event(
+            session=session,
+            action="etm_ingest",
+            source_system="etm",
+            record_count=len(daily_df),
+            route_count=int(daily_df["route_id"].nunique()),
+            agency_id=agency_id,
+            details={"job_id": job_id, "sha256": sha256_hash, "hourly_buckets": len(hourly_df)},
+        )
+        complete_import_job(
+            session=session,
+            job_id=job_id,
+            status="COMPLETED",
+            records_processed=len(daily_df),
+            records_inserted=inserted_daily,
+            records_updated=updated_daily,
+        )
+        session.commit()
+        return {
+            "status": "COMPLETED",
+            "job_id": job_id,
+            "hourly_buckets": len(hourly_df),
+            "daily_records_upserted": inserted_daily + updated_daily,
+            "routes_detected": sorted([str(r) for r in daily_df["route_id"].unique()]),
+        }
+    except Exception as exc:
+        session.rollback()
+        complete_import_job(
+            session=session,
+            job_id=job_id,
+            status="FAILED",
+            error_message=str(exc),
+        )
+        session.commit()
+        raise exc

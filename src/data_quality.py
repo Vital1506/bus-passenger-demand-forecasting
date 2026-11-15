@@ -120,16 +120,62 @@ class DataQualityMonitor:
             assessed_at_utc=now_iso,
             psi_score=psi,
             drift_level=drift_level,
-            model_degraded=(psi >= 0.25),
+            model_degraded=retrain,
             retraining_recommended=retrain,
             self_healing_action_taken=action,
             baseline_records_count=len(baseline),
             recent_records_count=len(recent),
             outlier_spikes_detected=outlier_count,
         )
-
-        self._log_event("drift_assessment", report.to_dict())
+        self._log_event("drift_check", report.to_dict())
         return report
+
+    def assess_residual_drift(
+        self,
+        validation_residuals: list[float] | np.ndarray,
+        production_residuals: list[float] | np.ndarray,
+    ) -> dict[str, Any]:
+        """Assess drift on forecast residuals (actual - predicted) using PSI (C7)."""
+        v_arr = np.asarray(validation_residuals, dtype=float)
+        p_arr = np.asarray(production_residuals, dtype=float)
+        v_arr = v_arr[np.isfinite(v_arr)]
+        p_arr = p_arr[np.isfinite(p_arr)]
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if len(v_arr) < 10 or len(p_arr) < 10:
+            return {
+                "assessed_at_utc": now_iso,
+                "residual_psi": 0.0,
+                "drift_level": "STABLE",
+                "retraining_recommended": False,
+                "message": "Insufficient residual observations to compute residual PSI drift",
+            }
+
+        psi = calculate_psi(v_arr, p_arr)
+        if psi >= 0.25:
+            drift_level = "SIGNIFICANT"
+            retrain = True
+            msg = "Forecast residual distribution has drifted significantly (PSI >= 0.25); automated model retraining recommended."
+        elif psi >= 0.10:
+            drift_level = "MODERATE"
+            retrain = False
+            msg = "Moderate residual drift detected (0.10 <= PSI < 0.25); monitor forecast accuracy."
+        else:
+            drift_level = "STABLE"
+            retrain = False
+            msg = "Residual distribution is stable (PSI < 0.10)."
+
+        result = {
+            "assessed_at_utc": now_iso,
+            "residual_psi": round(psi, 4),
+            "drift_level": drift_level,
+            "retraining_recommended": retrain,
+            "validation_residuals_count": len(v_arr),
+            "production_residuals_count": len(p_arr),
+            "message": msg,
+        }
+        self._log_event("residual_drift_check", result)
+        return result
 
     def _log_event(self, event_type: str, details: dict[str, Any]) -> None:
         entry = {
