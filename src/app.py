@@ -1777,18 +1777,6 @@ def get_model_benchmark(
     folds: int = 1,
 ) -> dict[str, Any]:
     """Evaluate multi-model benchmark with concurrency lock, dataset SHA-256 caching, and admin authorization."""
-    if not DATA_PATH.exists():
-        raise HTTPException(status_code=404, detail="No historical passenger dataset available for model benchmarking")
-
-    data_bytes = DATA_PATH.read_bytes()
-    data_hash = hashlib.sha256(data_bytes).hexdigest()
-    cache_key = (data_hash, horizon, folds)
-
-    if cache_key in _BENCHMARK_CACHE:
-        cached = dict(_BENCHMARK_CACHE[cache_key])
-        cached["cached"] = True
-        return cached
-
     acquired = BENCHMARK_LOCK.acquire(blocking=False)
     if not acquired:
         raise HTTPException(
@@ -1797,7 +1785,24 @@ def get_model_benchmark(
         )
 
     try:
-        data = load_data(str(DATA_PATH))
+        data_path = PUBLIC_DEMO_ARTIFACTS.get("data") or DATA_PATH
+        if not data_path.exists():
+            sample = project_path("data/sample_daily_ridership.csv")
+            if sample.exists():
+                data_path = sample
+            else:
+                raise HTTPException(status_code=404, detail="No historical passenger dataset available for model benchmarking")
+
+        data_bytes = data_path.read_bytes()
+        data_hash = hashlib.sha256(data_bytes).hexdigest()
+        cache_key = (data_hash, horizon, folds)
+
+        if cache_key in _BENCHMARK_CACHE:
+            cached = dict(_BENCHMARK_CACHE[cache_key])
+            cached["cached"] = True
+            return cached
+
+        data = load_data(str(data_path))
         result = run_multi_model_benchmark(
             data,
             horizon=horizon,
@@ -1806,6 +1811,8 @@ def get_model_benchmark(
         )
         _BENCHMARK_CACHE[cache_key] = result
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
