@@ -208,6 +208,21 @@ def ensure_system_initialized() -> None:
         except Exception as exc:
             logger.error("Failed to bootstrap sample dataset: %s", exc)
 
+    # 2b. Bootstrap Monthly CTA Ridership Store if missing
+    sample_monthly_csv = project_path("data/sample_cta_monthly_ridership.csv")
+    if not MONTHLY_DATA_PATH.exists() and sample_monthly_csv.exists():
+        try:
+            MONTHLY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            contents = sample_monthly_csv.read_bytes()
+            MonthlyRidershipStore(MONTHLY_DATA_PATH).import_csv(
+                contents,
+                "sample_cta_monthly_ridership.csv",
+                "bundled reference sample",
+            )
+            logger.info("Initialized MONTHLY_DATA_PATH from bundled sample CTA ridership.")
+        except Exception as exc:
+            logger.warning("Failed to bootstrap sample monthly ridership: %s", exc)
+
     # 3. Bootstrap Model Artifacts in ARTIFACT_DIR
     if not MODEL_PATH.exists():
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -404,8 +419,8 @@ def authorize(authorization: str | None = Header(default=None)) -> Authenticated
 
 
 def require_public_monthly_read() -> None:
-    """Keep the narrow public monthly read surface disabled unless explicitly enabled."""
-    enabled = os.getenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "false").strip().lower() in {"1", "true", "yes"}
+    """Keep the public monthly route explorer enabled by default unless explicitly disabled."""
+    enabled = os.getenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "true").strip().lower() in {"1", "true", "yes"}
     if not enabled:
         raise HTTPException(status_code=404, detail="Public monthly route access is disabled")
 

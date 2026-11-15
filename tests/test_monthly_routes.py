@@ -152,3 +152,38 @@ def test_search_results_have_stable_sort_and_respect_limit(populated_routes):
     assert result["count"] == 1
     assert result["total_matches"] == 2
     assert result["routes"][0]["route_id"] == "A-10"
+
+
+def test_public_monthly_routes_and_history(populated_routes, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.delenv("BUS_FORECAST_DEV_MODE", raising=False)
+    monkeypatch.setenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "true")
+    client = TestClient(populated_routes.app)
+
+    # 1. Unauthenticated public search
+    resp = client.get("/api/public/monthly-data/routes?q=crosstown")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_matches"] == 2
+    routes = [r["route_id"] for r in data["routes"]]
+    assert "A-10" in routes
+    assert "B2" in routes
+
+    # 2. Unauthenticated public route history
+    resp_hist = client.get("/api/public/monthly-data/routes/A-10/history")
+    assert resp_hist.status_code == 200
+    hist = resp_hist.json()
+    assert hist["route_id"] == "A-10"
+    assert hist["observed_months"] == 2
+
+
+def test_public_monthly_routes_disabled_toggle(populated_routes, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("BUS_FORECAST_PUBLIC_MONTHLY_READ", "false")
+    client = TestClient(populated_routes.app)
+
+    resp = client.get("/api/public/monthly-data/routes")
+    assert resp.status_code == 404
+    assert "Public monthly route access is disabled" in resp.json()["detail"]
