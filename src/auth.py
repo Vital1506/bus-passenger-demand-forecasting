@@ -1,14 +1,19 @@
-"""Role-Based Access Control (RBAC), rate limiting, and audit logging."""
+"""Role-Based Access Control (RBAC), constant-time authentication, rate limiting, and tenant isolation."""
 
 from __future__ import annotations
 
+import hmac
+import json
+import logging
 import os
 import time
-from collections import defaultdict
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from fastapi import Header, HTTPException
+
+logger = logging.getLogger(__name__)
 
 
 class UserRole(str, Enum):
@@ -18,22 +23,84 @@ class UserRole(str, Enum):
     ADMINISTRATOR = "administrator"
 
 
-class InMemoryRateLimiter:
-    """Sliding-window in-memory rate limiter per IP/client token."""
+@dataclass(frozen=True)
+class AuthenticatedPrincipal:
+    """Authenticated security identity representing role, agency tenancy, and key identifier."""
 
-    def __init__(self, max_requests: int = 120, window_seconds: int = 60):
+    role: UserRole
+    agency: str | None = None
+    key_id: str | None = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        return self.role != UserRole.PUBLIC
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, UserRole):
+            return self.role == other
+        if isinstance(other, AuthenticatedPrincipal):
+            return (self.role, self.agency, self.key_id) == (other.role, other.agency, other.key_id)
+        return False
+
+    def __hash__(self) -> int:
+        return hash((self.role, self.agency, self.key_id))
+
+
+class InMemoryRateLimiter:
+    """Sliding-window in-memory rate limiter per IP/client token with idle client eviction."""
+
+    def __init__(self, max_requests: int = 120, window_seconds: int = 60, max_clients: int = 10000):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._history: dict[str, list[float]] = defaultdict(list)
+        self.max_clients = max_clients
+        self._history: dict[str, list[float]] = {}
+        self._last_eviction: float = time.time()
+
+    def evict_idle(self, now: float | None = None) -> int:
+        """Evict clients with no requests in the current sliding window to prevent memory exhaustion."""
+        now = now if now is not None else time.time()
+        cutoff = now - self.window_seconds
+        evicted = 0
+        to_delete = []
+
+        for client_id, timestamps in list(self._history.items()):
+            active = [t for t in timestamps if t > cutoff]
+            if not active:
+                to_delete.append(client_id)
+            else:
+                self._history[client_id] = active
+
+        for client_id in to_delete:
+            del self._history[client_id]
+            evicted += 1
+
+        # Enforce maximum client map bound (LRU-style pruning of oldest entries)
+        if len(self._history) > self.max_clients:
+            excess = len(self._history) - self.max_clients
+            for client_id in list(self._history.keys())[:excess]:
+                del self._history[client_id]
+                evicted += 1
+
+        self._last_eviction = now
+        return evicted
 
     def check(self, client_id: str) -> bool:
         now = time.time()
         cutoff = now - self.window_seconds
-        # Clean older timestamps
-        self._history[client_id] = [t for t in self._history[client_id] if t > cutoff]
-        if len(self._history[client_id]) >= self.max_requests:
+
+        # Run sweep periodically (every 30 seconds)
+        if now - self._last_eviction > 30.0:
+            self.evict_idle(now)
+
+        timestamps = self._history.get(client_id, [])
+        active = [t for t in timestamps if t > cutoff]
+
+        if len(active) >= self.max_requests:
+            self._history[client_id] = active
             return False
-        self._history[client_id].append(now)
+
+        active.append(now)
+        self._history[client_id] = active
         return True
 
 
@@ -44,11 +111,76 @@ def get_rate_limiter() -> InMemoryRateLimiter:
     return _GLOBAL_RATE_LIMITER
 
 
-def resolve_role(authorization: str | None = None) -> UserRole:
-    """Determine role from authorization header and environment configuration."""
-    require_auth = os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() in {"1", "true", "yes"}
-    if not require_auth:
-        return UserRole.ADMINISTRATOR  # Unrestricted local developer mode
+def _get_configured_keys() -> list[dict[str, Any]]:
+    """Retrieve all configured API keys with roles and tenant agency bindings."""
+    keys: list[dict[str, Any]] = []
+
+    # 1. Multi-key JSON environment configuration (supports hashed or raw token structures)
+    json_config = os.getenv("BUS_FORECAST_API_KEYS_JSON", "").strip()
+    if json_config:
+        try:
+            parsed = json.loads(json_config)
+            if isinstance(parsed, list):
+                for entry in parsed:
+                    if isinstance(entry, dict) and entry.get("key") and entry.get("role"):
+                        try:
+                            role = UserRole(entry["role"].lower())
+                            keys.append({
+                                "key": str(entry["key"]).strip(),
+                                "role": role,
+                                "agency": str(entry.get("agency", "")).strip() or None,
+                                "key_id": str(entry.get("key_id", entry.get("name", "custom"))),
+                            })
+                        except ValueError:
+                            logger.warning("Invalid role in BUS_FORECAST_API_KEYS_JSON entry: %s", entry.get("role"))
+            elif isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    if isinstance(v, dict) and v.get("role"):
+                        try:
+                            role = UserRole(v["role"].lower())
+                            keys.append({
+                                "key": str(k).strip(),
+                                "role": role,
+                                "agency": str(v.get("agency", "")).strip() or None,
+                                "key_id": str(v.get("key_id", "custom")),
+                            })
+                        except ValueError:
+                            pass
+        except Exception as exc:
+            logger.warning("Could not parse BUS_FORECAST_API_KEYS_JSON: %s", exc)
+
+    # 2. Standard discrete environment variables
+    admin_key = (os.getenv("BUS_FORECAST_ADMIN_KEY") or "").strip()
+    if admin_key:
+        keys.append({"key": admin_key, "role": UserRole.ADMINISTRATOR, "agency": None, "key_id": "admin_env"})
+
+    operator_key = (os.getenv("BUS_FORECAST_OPERATOR_KEY") or "").strip()
+    operator_agency = (os.getenv("BUS_FORECAST_OPERATOR_AGENCY") or "CTA").strip() or None
+    if operator_key:
+        keys.append({"key": operator_key, "role": UserRole.OPERATOR, "agency": operator_agency, "key_id": "operator_env"})
+
+    analyst_key = (os.getenv("BUS_FORECAST_ANALYST_KEY") or "").strip()
+    analyst_agency = (os.getenv("BUS_FORECAST_ANALYST_AGENCY") or "CTA").strip() or None
+    if analyst_key:
+        keys.append({"key": analyst_key, "role": UserRole.ANALYST, "agency": analyst_agency, "key_id": "analyst_env"})
+
+    # 3. Legacy master API key
+    master_key = (os.getenv("BUS_FORECAST_API_KEY") or "").strip()
+    if master_key:
+        keys.append({"key": master_key, "role": UserRole.ADMINISTRATOR, "agency": None, "key_id": "master_env"})
+
+    return keys
+
+
+def resolve_principal(authorization: str | None = None) -> AuthenticatedPrincipal:
+    """Resolve caller identity using constant-time digest comparisons and strict fail-closed defaults.
+    
+    Fail closed: If BUS_FORECAST_DEV_MODE is not explicitly enabled (1/true/yes),
+    unauthenticated requests or invalid tokens are assigned PUBLIC role.
+    """
+    dev_mode = os.getenv("BUS_FORECAST_DEV_MODE", "").strip().lower() in {"1", "true", "yes"}
+    if dev_mode and not authorization:
+        return AuthenticatedPrincipal(role=UserRole.ADMINISTRATOR, agency="default", key_id="dev_mode")
 
     token = None
     if authorization:
@@ -59,27 +191,35 @@ def resolve_role(authorization: str | None = None) -> UserRole:
             token = parts[0]
 
     if not token:
-        return UserRole.PUBLIC
+        return AuthenticatedPrincipal(role=UserRole.PUBLIC)
 
-    admin_key = os.getenv("BUS_FORECAST_ADMIN_KEY") or os.getenv("BUS_FORECAST_API_KEY")
-    operator_key = os.getenv("BUS_FORECAST_OPERATOR_KEY") or os.getenv("BUS_FORECAST_API_KEY")
-    analyst_key = os.getenv("BUS_FORECAST_ANALYST_KEY") or operator_key
+    # Validate against configured keys using constant-time comparison
+    configured = _get_configured_keys()
+    token_bytes = token.encode("utf-8")
 
-    if admin_key and token == admin_key:
-        return UserRole.ADMINISTRATOR
-    if operator_key and token == operator_key:
-        return UserRole.OPERATOR
-    if analyst_key and token == analyst_key:
-        return UserRole.ANALYST
+    for entry in configured:
+        candidate_bytes = entry["key"].encode("utf-8")
+        if hmac.compare_digest(token_bytes, candidate_bytes):
+            return AuthenticatedPrincipal(
+                role=entry["role"],
+                agency=entry["agency"],
+                key_id=entry["key_id"],
+            )
 
-    return UserRole.PUBLIC
+    return AuthenticatedPrincipal(role=UserRole.PUBLIC)
+
+
+def resolve_role(authorization: str | None = None) -> UserRole:
+    """Determine role from authorization header."""
+    return resolve_principal(authorization).role
 
 
 def require_role(min_role: UserRole):
-    """FastAPI dependency enforcing minimum required role."""
+    """FastAPI dependency enforcing minimum required role and returning authenticated principal."""
 
-    def role_dependency(authorization: str | None = Header(default=None)) -> UserRole:
-        role = resolve_role(authorization)
+    def role_dependency(authorization: str | None = Header(default=None)) -> AuthenticatedPrincipal:
+        principal = resolve_principal(authorization)
+        role = principal.role
 
         role_hierarchy = {
             UserRole.PUBLIC: 0,
@@ -92,22 +232,22 @@ def require_role(min_role: UserRole):
             if role == UserRole.PUBLIC:
                 raise HTTPException(
                     status_code=401,
-                    detail="Authentication required: Provide a valid Bearer token for access",
+                    detail="Enter the API access key in app settings",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             raise HTTPException(
                 status_code=403,
                 detail=f"Forbidden: Action requires '{min_role.value}' role; caller holds '{role.value}'",
             )
-        return role
+        return principal
 
     return role_dependency
 
 
 def verify_agency_isolation(caller_role: UserRole, caller_agency: str | None, target_agency: str | None) -> bool:
-    """Enforce agency-level tenant isolation. Administrators have global access; operators are restricted."""
+    """Enforce agency-level tenant isolation. Administrators have global access; operators/analysts fail closed."""
     if caller_role == UserRole.ADMINISTRATOR:
         return True
     if not caller_agency or not target_agency:
-        return True
+        return False  # Fail closed: unassigned agency or missing target cannot cross tenants
     return caller_agency.strip().lower() == target_agency.strip().lower()

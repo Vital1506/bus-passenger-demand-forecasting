@@ -13,6 +13,7 @@ from src.reporting import (
     export_daily_report_csv,
     generate_capacity_risk_report,
     generate_daily_passenger_report,
+    is_safe_webhook_url,
     send_alert_webhook,
 )
 
@@ -63,6 +64,8 @@ def test_capacity_risk_report(test_db):
 
 
 def test_send_alert_webhook(monkeypatch):
+    monkeypatch.setattr("socket.getaddrinfo", lambda host, port, proto=0: [(2, 1, 6, "", ("93.184.216.34", 443))])
+
     class MockClient:
         def post(self, url, json):
             class MockResponse:
@@ -74,3 +77,45 @@ def test_send_alert_webhook(monkeypatch):
 
     # Empty url returns False
     assert send_alert_webhook("", {}) is False
+
+
+def test_webhook_ssrf_protection_rejects_insecure_and_internal_targets(monkeypatch):
+    monkeypatch.delenv("BUS_FORECAST_DEV_MODE", raising=False)
+    monkeypatch.delenv("BUS_FORECAST_ALLOW_INSECURE_WEBHOOKS", raising=False)
+
+    # 1. Plain HTTP is rejected
+    is_safe, msg = is_safe_webhook_url("http://example.com/hook")
+    assert not is_safe
+    assert "HTTPS" in msg
+
+    # 2. Loopback IP is rejected
+    is_safe, msg = is_safe_webhook_url("https://127.0.0.1:8443/hook")
+    assert not is_safe
+    assert "loopback" in msg
+
+    # 3. Cloud metadata IP (169.254.169.254) is rejected
+    is_safe, msg = is_safe_webhook_url("https://169.254.169.254/latest/meta-data")
+    assert not is_safe
+    assert "link-local" in msg
+
+    # 4. RFC 1918 Private networks rejected
+    for private_target in ["10.0.0.1", "172.16.5.1", "192.168.1.100"]:
+        is_safe, msg = is_safe_webhook_url(f"https://{private_target}/hook")
+        assert not is_safe
+        assert "private network" in msg
+
+    # 5. Embedded credentials rejected
+    is_safe, msg = is_safe_webhook_url("https://admin:pass@example.com/hook")
+    assert not is_safe
+    assert "credentials" in msg
+
+    # 6. Host allowlist filtering
+    monkeypatch.setenv("BUS_FORECAST_WEBHOOK_ALLOWLIST", "hooks.slack.com,api.pagerduty.com")
+    monkeypatch.setattr("socket.getaddrinfo", lambda host, port, proto=0: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    
+    is_safe, msg = is_safe_webhook_url("https://evil-attacker.com/hook")
+    assert not is_safe
+    assert "not in the allowed webhook hosts" in msg
+
+    is_safe, _ = is_safe_webhook_url("https://hooks.slack.com/services/T00/B00/X00")
+    assert is_safe

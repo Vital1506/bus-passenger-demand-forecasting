@@ -102,12 +102,17 @@ An automated decision-support system analyzing live fleet telemetry to assist di
 
 ## Security, RBAC & operator access control
 
-The platform enforces a three-tier Role-Based Access Control model:
-- **Public / Viewer:** read-only synthetic demo, GTFS static network explorer, public schedules.
-- **Operator:** access to operational forecasts, live vehicle telemetry, dispatch alerts, and daily count uploads (`BUS_FORECAST_OPERATOR_KEY`).
-- **Administrator:** access to model training, GTFS schedule upload, monthly ridership ingestion, database migrations, and drift checks (`BUS_FORECAST_ADMIN_KEY` or unified `BUS_FORECAST_API_KEY`).
-- **Rate limiting:** in-memory sliding-window limiter protecting endpoints from abusive traffic.
-- **REST APIs:** `/api/auth/roles` for caller role and permission inspection.
+The platform enforces a verified multi-tier Role-Based Access Control (RBAC) model with fail-closed defaults and agency tenant isolation:
+- **Public:** read-only synthetic demo, GTFS static network explorer, public schedules, health/readiness probes, and grounded conversational AI Copilot queries.
+- **Analyst:** operational forecast queries, CSV downloads, trip/route occupancy profiles, dispatch decision recommendations, and operational metrics (`BUS_FORECAST_ANALYST_KEY`).
+- **Operator:** daily route count ingestion, APC/AFC passenger data uploads, GTFS-RT feed ingestion, and live telemetry demo snapshots (`BUS_FORECAST_OPERATOR_KEY`).
+- **Administrator:** machine-learning model training, GTFS ZIP uploads, monthly ridership ingestion, database migrations, model benchmarks, SSRF-validated webhook dispatching, and drift audit log inspection (`BUS_FORECAST_ADMIN_KEY` or unified `BUS_FORECAST_API_KEY`).
+- **Tenant Isolation:** Operators and analysts are strictly restricted to their assigned agency tenant (`principal.agency`), rejecting unauthorized cross-agency queries with HTTP 403 Forbidden.
+- **Constant-Time Token Validation:** All token evaluations use `hmac.compare_digest` to prevent timing attacks.
+- **Fail-Closed Security Defaults:** Unauthenticated callers are assigned `PUBLIC` role by default; local unauthenticated developer mode requires explicit `BUS_FORECAST_DEV_MODE=1`.
+- **SSRF Protection:** Webhook dispatching in `src/reporting.py` validates DNS resolution, strictly blocking loopback (`127.0.0.1`), private RFC 1918 ranges, cloud metadata (`169.254.169.254`), and carrier-grade NAT, while enforcing `BUS_FORECAST_WEBHOOK_ALLOWLIST` and disabling HTTP redirects.
+- **Bounded Rate Limiting:** Sliding-window rate limiting with periodic idle client eviction (`evict_idle()`) and LRU capacity bounding (`max_clients=10000`).
+- **REST APIs:** `/api/auth/roles` for caller role, agency tenancy, and permission inspection.
 
 ## Interface design
 
