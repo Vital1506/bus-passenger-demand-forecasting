@@ -1,152 +1,273 @@
-# Bus Passenger Demand Forecasting
+<div align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0B1F2A,45:123B46,100:137F83&height=170&section=header&text=TRANSIT%20DEMAND%20INTELLIGENCE&fontSize=30&fontColor=F4FFFF&fontAlignY=38&animation=twinkling" width="100%" alt="Animated Transit Demand Intelligence banner" />
+  <br />
+  <img src="web/icon.svg" width="116" height="116" alt="Bus Passenger Demand Forecasting application logo" />
+  <h1>Bus Passenger Demand Forecasting</h1>
+  <p><strong>Forecast route-level passenger demand. Evaluate model performance. Support better transit planning.</strong></p>
+  <a href="https://readme-typing-svg.demolab.com"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=19&duration=2800&pause=850&color=47D2CD&center=true&vCenter=true&width=760&lines=Daily+Passenger+Demand+Forecasting;Machine+Learning+%2B+Seasonal+Naive+Benchmarking;GTFS+Network+%2B+Transit+Operations+Tools;Forecasts+with+Transparent+Backtesting" alt="Animated project capability text" /></a>
+  <br /><br />
+  <a href="https://bus-passenger-demand-forecasting-xgx2.onrender.com"><img src="https://img.shields.io/badge/OPEN%20LIVE%20DEMO-137F83?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Open live demo" /></a>
+  <a href="https://github.com/Vital1506/bus-passenger-demand-forecasting"><img src="https://img.shields.io/badge/SOURCE%20CODE-181717?style=for-the-badge&logo=github&logoColor=white" alt="Source code" /></a>
+  <br /><br />
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10 plus" />
+  <img src="https://img.shields.io/badge/API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/ML-scikit--learn-F7931E?style=flat-square&logo=scikitlearn&logoColor=white" alt="scikit-learn" />
+  <img src="https://img.shields.io/badge/Database-SQLite%20%7C%20PostgreSQL-336791?style=flat-square&logo=postgresql&logoColor=white" alt="SQLite and PostgreSQL" />
+  <img src="https://img.shields.io/badge/Deployment-Render-46E3B7?style=flat-square&logo=render&logoColor=black" alt="Render" />
+  <br />
+  <a href="https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/train-model.yml"><img src="https://img.shields.io/github/actions/workflow/status/Vital1506/bus-passenger-demand-forecasting/train-model.yml?branch=main&label=model%20training&logo=githubactions&style=flat-square" alt="Model training workflow status" /></a>
+  <a href="https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/python-package-conda.yml"><img src="https://img.shields.io/github/actions/workflow/status/Vital1506/bus-passenger-demand-forecasting/python-package-conda.yml?branch=main&label=python%20checks&logo=githubactions&style=flat-square" alt="Python workflow status" /></a>
+</div>
 
-**[Open the live website](https://bus-demand-forecast-4jmb.onrender.com/)** · [API health](https://bus-demand-forecast-4jmb.onrender.com/api/health)
+---
 
-The live site opens in a **public, read-only synthetic demo**. It does not require a key and cannot accept uploads or train models. Operator features require an authorized bearer key in Settings; API calls use the same website origin. Render's free service can sleep while idle, so allow a short cold start on first visit. Demo records and forecasts are synthetic and are not evidence of real-world accuracy.
+## Overview
 
-An operationally oriented Python baseline for **daily passenger boardings per route**. The workflow validates input coverage, uses time-based rolling-origin backtests, compares a machine-learning model with a seasonal-naive baseline, saves evaluation artifacts, and produces recursive forecasts with approximate historical error bands.
+**Bus Passenger Demand Forecasting** is a Python-powered transit analytics application for estimating **daily passenger boardings for each bus route**. It combines a machine-learning forecasting pipeline with a seasonal-naive benchmark, time-based backtesting, route-level analysis, data-quality checks, and a responsive operator dashboard.
 
-This is a strong starting implementation, not a claim of production readiness or guaranteed accuracy. Company data, service calendars, operational definitions, and a shadow evaluation are required before use in planning.
+The repository also contains transit-network and operations modules for GTFS schedules, optional GTFS-Realtime integrations, occupancy analysis, service-planning scenarios, operational alerts, reports, and an AI assistant. These capabilities depend on the relevant datasets, provider configuration, and authorized access; they should not be interpreted as proof that a live transit operator is connected.
 
-## Reproducible model training and evaluation
+> **Live demo:** [bus-passenger-demand-forecasting-xgx2.onrender.com](https://bus-passenger-demand-forecasting-xgx2.onrender.com)  
+> The public demo is a **read-only synthetic demonstration**. Its sample passenger records and forecasts are generated example data, not real ridership measurements or predictions for a visitor's city. The public demo does not accept company uploads or allow public model training.
 
-The [Train forecasting model workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/train-model.yml) runs on relevant source changes and can also be started manually from GitHub Actions. Choose **MTA** for a public historical dataset (default route: M15) or **sample** for the clearly labeled synthetic demo. Each run saves the trained model, data/source metadata, validation metrics, forecast-error analysis, and predictions as a downloadable artifact retained for 30 days.
+## Contents
 
-### Public MTA data
+- [Project goals](#project-goals)
+- [Main capabilities](#main-capabilities)
+- [System architecture](#system-architecture)
+- [Forecasting methodology](#forecasting-methodology)
+- [Model evaluation](#model-evaluation)
+- [Data format and validation](#data-format-and-validation)
+- [Transit network and GTFS](#transit-network-and-gtfs)
+- [GTFS-Realtime and operations](#gtfs-realtime-and-operations)
+- [AI transit assistant](#ai-transit-assistant)
+- [API reference](#api-reference)
+- [Technology stack](#technology-stack)
+- [Run locally](#run-locally)
+- [Configuration](#configuration)
+- [Desktop and mobile app](#desktop-and-mobile-app)
+- [Deployment](#deployment)
+- [Tests and model training](#tests-and-model-training)
+- [Limitations and responsible use](#limitations-and-responsible-use)
 
-The workflow uses the official [MTA Bus Hourly Ridership: 2020–2024 dataset](https://data.ny.gov/Transportation/MTA-Bus-Hourly-Ridership-2020-2024/kv7t-n8in). The downloader [src/fetch_mta_daily.py](src/fetch_mta_daily.py) sums hourly estimates across fare/payment categories by route and local calendar date. The source covers historical records from 2022 through 2024 and is not a live feed. The default portfolio run selects one route, M15; other MTA route IDs can be entered when manually starting the workflow.
+## Project goals
 
-Dates with no published route rows are explicitly zero-filled for this experiment to represent zero recorded boardings. That can also coincide with a day without service, so verify against a service calendar before interpreting the values operationally. The source does not provide evidence for how this prototype would perform on another operator, route, or future period.
+The application is designed to help a transit analyst or operator explore questions such as:
 
-Run the same fetch and train flow locally:
+- How many passengers may board each route over the next several days?
+- Does the machine-learning model outperform a simple weekly seasonal baseline?
+- Which routes contribute most to the forecast total?
+- Is the input dataset complete, current, and consistent enough to train on?
+- What do route schedules and stop sequences look like when a GTFS feed is available?
+- What operational risks or capacity scenarios should be reviewed by a human planner?
 
-```powershell
-python -m src.fetch_mta_daily --routes M15 --output artifacts/mta_daily_ridership.csv
-python -m src.train --data artifacts/mta_daily_ridership.csv --missing-days zero --horizon 7 --folds 4 --holdout-days 28
+The forecasting target is **daily route boardings**. It is not an individual passenger prediction, a verified stop-to-stop load forecast, or a live GPS tracking product by itself.
+
+## Main capabilities
+
+| Area | What the project provides |
+|---|---|
+| Demand forecasting | Recursive multi-day forecasts for daily boardings, with a default seven-day horizon |
+| Model comparison | Machine-learning evaluation against a seasonal-naive weekly baseline |
+| Backtesting | Expanding-window rolling-origin validation and a separate walk-forward holdout |
+| Data quality | Required-column checks, date validation, duplicate detection, finite/non-negative count checks, and missing-date policy |
+| Route analytics | Route summaries, forecast tables, filters, visualizations, and CSV export in the dashboard |
+| GTFS Schedule | Import and explore agencies, routes, stops, trips, stop times, calendars, and optional shapes |
+| GTFS-Realtime | Provider/file ingestion paths for vehicle positions, trip updates, and service alerts when configured |
+| Operations | Occupancy calculations, service-planning scenarios, operational alerts, and dispatch recommendations |
+| Data monitoring | Drift status, audit events, source freshness, and database/storage health checks |
+| AI assistant | Optional OpenRouter-backed chat grounded in available local forecast and transit context |
+| App clients | Browser dashboard, installable Android PWA, and a Windows desktop launcher/build workflow |
+
+## System architecture
+
+The application separates the web interface, API, data persistence, and forecasting logic. Optional transit feeds and AI services connect through their own integration paths.
+
+```mermaid
+flowchart TD
+    A[Operator or Demo User] --> B[Responsive Web Dashboard]
+    B --> C[FastAPI Application]
+    C --> D[Authentication and Input Validation]
+    D --> E[(SQLite or PostgreSQL)]
+    D --> F[Daily Ridership Dataset]
+    F --> G[Feature Engineering]
+    G --> H[ML Model and Seasonal-Naive Benchmark]
+    H --> I[Backtesting and Error Analysis]
+    H --> J[Forecast Output and Approximate Error Bands]
+    J --> B
+    K[GTFS Schedule Feed] --> L[GTFS Import and Route Explorer]
+    M[Optional GTFS-Realtime Provider] --> N[Vehicle, Trip and Alert Services]
+    L --> C
+    N --> C
+    O[Optional OpenRouter API] <--> P[AI Transit Assistant]
+    P <--> C
 ```
 
-### Time-based validation and error review
+### Request and forecasting lifecycle
 
-The workflow uses four expanding-window model-selection folds of seven days each, followed by a final 28-day walk-forward holdout. It scores the holdout in four successive seven-day blocks; actual counts from a block are added to training history only after that block is forecast. The report compares the ML model with a seasonal-naive benchmark and breaks down WAPE by route and forecast lead day. It also lists the five largest holdout errors for review. The downloadable artifact contains both the model-selection predictions and the final holdout predictions, so the results can be independently inspected.
+1. A visitor opens the dashboard or an authorized operator accesses protected functions.
+2. The API loads the available route-day observations and checks their format and coverage.
+3. The forecasting pipeline creates calendar and historical-demand features without using future passenger counts.
+4. Model-selection backtests compare the ML estimator with the seasonal-naive benchmark.
+5. The selected forecast strategy produces recursive multi-day route forecasts.
+6. Forecasts, approximate error ranges, source metadata, and model metrics are made available to the dashboard and CSV endpoints.
 
-The earlier [synthetic demonstration run](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/runs/42828632328) measured 11.21% model WAPE versus 14.19% for seasonal naive; those numbers describe only generated sample data. The latest [MTA M15 run](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/runs/42832698798) fetched 1,065 of 1,065 calendar dates in the selected 2022–2024 period. Its model-selection WAPE was 10.15% versus 10.17% for seasonal naive. On the final 28-day walk-forward holdout, WAPE was 11.92% versus 18.10% for the baseline. This is evidence for this one historical MTA route and evaluation setup only; it does not establish performance on other routes, operators, current data, or future periods. Download the run's **bus-demand-model-and-backtest** artifact to inspect the input data, fitted model, fold predictions, holdout predictions, and error report.
+## Forecasting methodology
 
-## Operator workspace
+### Prediction grain
 
-The web app now opens with a branded opening screen that waits for the forecast service before entering the dashboard and has dedicated **Overview**, **Forecasts**, **Routes**, **Data**, and **Model** pages. Route summaries aggregate the forecast window by route, the model page compares WAPE with the seasonal-naive baseline, and the data page shows source coverage and forecast freshness.
+One training observation represents one `route_id` on one `service_date`, with the target column `passengers` containing the number of boardings recorded for that route and date.
 
-The dashboard checks its API every 60 seconds while the page is open. Forecasts update after new records are ingested and the model/forecast is refreshed. A live ticketing or vehicle telemetry feed is **not connected by default**; configure an approved data integration and update schedule before treating the app as real-time operations software.
+### Feature engineering
 
-## Database and persistence architecture
+The forecasting pipeline derives features from information available up to the forecast origin, including:
 
-The platform supports both zero-configuration local SQLite and production PostgreSQL managed through SQLAlchemy and Alembic.
+- Calendar features: day of week, month, weekend indicator, and annual seasonal sine/cosine terms.
+- Historical lags: 1, 7, 14, and 28 days.
+- Rolling statistics: trailing seven-day mean, 28-day mean, and 28-day standard deviation.
+- Route identity: route ID is encoded as a categorical/model feature.
 
-- **Development default:** local SQLite database at `data/transit_intelligence.db`
-- **Production configuration:** set `DATABASE_URL=postgresql://user:pass@host:5432/dbname`
-- **Readiness probe:** `/api/ready` checks database connectivity and storage health for container orchestrators (Render, Kubernetes)
-- **Monitoring endpoints:** `/api/db/health`, `/api/storage/health`, `/api/db/migrations`
-- **Alembic migrations:** run `alembic upgrade head`
-- **File-to-DB migration:** migrate legacy CSV/JSON files using `python -m src.db.migrate_files_to_db` (supports `--dry-run` and automatic backup)
+### Model and fallback strategy
 
-Detailed migration steps and database schema tables are documented in [MIGRATIONS.md](MIGRATIONS.md).
+The machine-learning candidate is a scikit-learn `HistGradientBoostingRegressor` within the project's feature-processing pipeline. It is compared with a **seasonal-naive** forecast that repeats the matching weekday's latest available value from the previous week.
 
-## GTFS static transit network integration
+The training workflow selects the ML model only when its rolling-origin WAPE is lower than the seasonal-naive WAPE. Otherwise, the saved model bundle selects the seasonal-naive strategy. This makes the simple baseline an explicit fallback rather than assuming a more complex model is always better.
 
-The platform integrates standard General Transit Feed Specification (GTFS Schedule) feeds to anchor passenger forecasting and route exploration in actual transit geometry and service timetables.
+### Recursive forecasting
 
-- **Strict GTFS specification adherence:** supports `agency.txt`, `routes.txt`, `stops.txt`, `trips.txt`, `stop_times.txt`, `calendar.txt` / `calendar_dates.txt`, and optional `shapes.txt`.
-- **Security & integrity:** ZipSlip path traversal protection on all archive entries, 50 MB archive upload limit, relational foreign key validation, coordinate bounds check (`-90 <= lat <= 90`, `-180 <= lon <= 180`), and GTFS extended post-midnight time parsing (e.g. `25:30:00`).
-- **REST APIs:**
-  - `POST /api/gtfs/upload`: authenticated multipart ZIP upload with transactional replacement and audit logging.
-  - `GET /api/gtfs/feeds`: list imported GTFS feeds and status metadata.
-  - `GET /api/gtfs/agencies`: transit operators in scope.
-  - `GET /api/gtfs/routes`: route catalog with trip counts and search query filtering.
-  - `GET /api/gtfs/routes/{route_id}`: comprehensive route details with schedule bounds, service calendar days, ordered stops, and shape coordinates.
-  - `GET /api/gtfs/stops`: network stops catalog with search and coordinate lookup.
-- **Transit Network Explorer:** accessible in the web dashboard under **Transit Network** to inspect operators, browse routes, review operating hours, view service day badges, preview alignment shapes as responsive vector paths, and inspect ordered stop sequences.
+Forecasts are generated recursively. Earlier predictions in the requested forecast horizon become lag inputs for later forecast dates. Historical backtesting uses the same multi-step approach so that the evaluation resembles the actual forecasting workflow.
 
-## GTFS-Realtime (GTFS-RT) telemetry engine
+### Forecast ranges
 
-The platform ingests live GTFS-Realtime feeds across all three specification standards:
-- **VehiclePositions:** live GPS coordinates, bearing, speed, current status, stop sequence, and occupancy status.
-- **TripUpdates:** real-time delays, schedule adherence, and predicted stop arrival/departure times.
-- **ServiceAlerts:** disruptions, causes, effects, active time spans, and informed transit entities.
-- **Protobuf wire & JSON support:** includes a zero-dependency, streaming binary Protocol Buffers decoder and JSON parser.
-- **Anomaly filtering:** automatic GPS jump/teleportation detection (`> 130 km/h`), invalid coordinate rejection, and stale telemetry timeout pruning.
-- **REST APIs:** `/api/realtime/vehicles`, `/api/realtime/trip-updates`, `/api/realtime/alerts`, `/api/realtime/summary`, and `/api/realtime/demo-snapshot`.
+The output includes lower and upper approximate bands based on historical forecast residuals. These are useful for visual context, but they are **not formal probabilistic prediction intervals** and should not be interpreted as guaranteed confidence bounds.
 
-## Hybrid demand forecasting engine
+## Model evaluation
 
-Bridges macroscopic multi-day passenger demand forecasting with real-time intraday operations:
-- **Diurnal transit curve:** standard 24-hour transit demand profile modeling AM peak, midday base, PM peak, and night services.
-- **Live crowding calibration:** integrates real-time vehicle occupancy and downstream queue expansion during transit delays.
-- **Multi-horizon projections:** Next 1 hour, Next 4 hours, and 24-hour diurnal profile with 90% confidence bands.
-- **Graceful fallback:** if live telemetry drops, falls back automatically to scheduled timetable frequency and daily baseline without downtime.
-- **REST APIs:** `/api/forecast/realtime/{route_id}`, `/api/forecast/intraday`.
+The training workflow is designed around time order rather than a random train/test split:
 
-## Transit operations & dispatch decision support
+1. Build expanding-window model-selection folds.
+2. Forecast each fold across the selected horizon.
+3. Compare model predictions with the seasonal-naive baseline.
+4. Reserve a final chronological holdout period for a separate walk-forward evaluation.
+5. Report MAE, RMSE, and WAPE overall and by route/forecast lead day.
+6. Save model-selection and holdout predictions so the evaluation can be inspected independently.
 
-An automated decision-support system analyzing live fleet telemetry to assist dispatchers and control rooms:
-- **Bus bunching detection:** flags consecutive buses on the same route with headway < 3 minutes or spacing < 600m.
-- **Excessive gap warnings:** flags service gaps > 4 km or > 18 minutes.
-- **Automated dispatch recommendations:** generates holding/spacing instructions at control points, short-turn directives, and standby injections.
-- **Fleet KPIs:** On-Time Performance (OTP), Excess Wait Time (EWT), and Service Regularity Index.
-- **REST APIs:** `/api/operations/alerts`, `/api/operations/dispatch-recommendations`, `/api/operations/metrics`.
+### Historical reference experiment
 
-## Automated data quality & drift detection
+The repository's earlier documented MTA M15 experiment used historical 2022–2024 ridership data. In that particular run, model-selection WAPE was **10.15%** versus **10.17%** for seasonal naive; the final 28-day walk-forward holdout WAPE was **11.92%** versus **18.10%** for the baseline.
 
-- **Population Stability Index (PSI):** continuous tracking of demand distribution drift between baseline training history and recent operational counts.
-- **Self-healing pipeline:** automatic recommendation or trigger for model retraining when PSI >= 0.25, with fallback to weekday-average baseline.
-- **Data audit logging:** tracks all drift assessments and ingestion events.
-- **REST APIs:** `/api/quality/drift-status`, `/api/quality/audit-logs`, `/api/quality/check-drift`.
+These figures describe **one historical route and one evaluation setup only**. They do not establish accuracy for other routes, transit agencies, current dates, or future periods. The synthetic demo's metrics are generated-data examples and must not be presented as real-world performance. Run a fresh evaluation with the target operator's verified data before making planning decisions.
 
-## Security, RBAC & operator access control
+## Data format and validation
 
-The platform enforces a three-tier Role-Based Access Control model:
-- **Public / Viewer:** read-only synthetic demo, GTFS static network explorer, public schedules.
-- **Operator:** access to operational forecasts, live vehicle telemetry, dispatch alerts, and daily count uploads (`BUS_FORECAST_OPERATOR_KEY`).
-- **Administrator:** access to model training, GTFS schedule upload, monthly ridership ingestion, database migrations, and drift checks (`BUS_FORECAST_ADMIN_KEY` or unified `BUS_FORECAST_API_KEY`).
-- **Rate limiting:** in-memory sliding-window limiter protecting endpoints from abusive traffic.
-- **REST APIs:** `/api/auth/roles` for caller role and permission inspection.
+### Required CSV columns
 
-## Interface design
+| Column | Type | Meaning | Example |
+|---|---|---|---|
+| `service_date` | Date | Local service date in `YYYY-MM-DD` format | `2026-11-09` |
+| `route_id` | String | Stable route identifier | `R10` |
+| `passengers` | Number | Non-negative passenger boardings for that route/date | `1240` |
 
-The dashboard uses a persistent desktop navigation rail, compact mobile tabs, clear headings, carefully spaced forecast surfaces, responsive route tables, and visible keyboard focus. Its restrained teal and warm-neutral visual system uses color for status and emphasis without making color the only signal. The visual system is informed by [Material Design 3](https://m3.material.io/) and [Carbon's accessible data visualization palettes](https://carbondesignsystem.com/data-visualization/color-palettes/). Status labels accompany their colors, and sample data is clearly identified.
+Example:
 
-## App clients
-
-The repository now includes a small operator dashboard backed by the existing Python forecasting engine:
-
-- **Windows desktop:** `desktop_launcher.py` starts a local API and opens the dashboard in a native WebView window. Daily counts and model artifacts are stored under the signed-in Windows user's local application data folder. By default, the service binds only to `127.0.0.1`.
-- **Android:** the responsive dashboard is an installable Progressive Web App (PWA). Serve the API and dashboard on an approved HTTPS host, open that URL in Chrome on Android, and choose **Install app** or **Add to Home screen**. It is not currently a Play Store APK.
-- **Shared service:** both clients use the website's same-origin API. On a protected host, an operator enters the bearer access key in **Settings**. Hosting and a persistent data volume are required for cross-device shared state.
-
-“Real time” currently means the API refreshes a forecast when new daily counts arrive; the browser checks API status every 60 seconds. An authenticated JSON ingestion endpoint supports scheduled daily-count exports, but a provider-specific ticketing/AVL adapter and schedule still need to be configured. This is not live vehicle telemetry.
-
-### Try the dashboard locally
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-desktop.txt
-python desktop_launcher.py
+```csv
+service_date,route_id,passengers
+2026-11-09,R10,1240
+2026-11-09,R22,980
+2026-11-10,R10,1315
+2026-11-10,R22,1012
 ```
 
-The live website shows a read-only synthetic forecast without a key. Visitors can choose 3, 7, 14, or 28 days, filter the chart and table to one route, and download a matching CSV. These controls reuse the cached synthetic model and never write to operator data. It is an example, not a forecast for the visitor's town or route. An authorized operator key unlocks the editable workspace. Operators can enter a daily passenger count manually using a route's origin, destination, service date, and observed total boardings, so they do not need to prepare a file. The place fields suggest pairs from the user-provided `Pan-India_Bus_Routes.csv`; suggestions are reference route labels only, not geocoded stops, verified live services, or passenger counts. Custom place labels are still accepted. The delivered CSV did not include source licensing/provenance details, so confirm permission before redistributing its source data. Counts are safely upserted by route and date; missing dates are flagged by default. Select zero-fill only when the operator confirms the service did not run or demand was zero. CSV import is available under **Have a file instead?** A timetable with `From` and `To` can be used only as a clearly labelled synthetic scenario derived from route frequency, not measured ridership. With at least 28 continuous days per route, the app can create a transparent weekday-average baseline automatically; it uses the recent mean for the matching weekday and is explicitly labeled as a baseline, not ML. With at least 118 continuous days per route, choose **Train my forecast** to run the time-based ML comparison and backtest. Place names, public maps, and schedules alone do not tell the model how many passengers actually boarded. Use the synthetic demo until enough actual counts are available.
+### Validation rules
 
-### Simple operator tutorial
+- All three required columns must exist.
+- Dates must be valid and are normalized to calendar dates.
+- Route IDs cannot be blank.
+- Passenger counts must be finite, numeric, and non-negative.
+- Duplicate route/date rows are rejected; aggregate them before training or ingestion.
+- Each route should have a continuous daily history through the latest date in the dataset.
+- Missing dates fail closed by default. Use zero-fill only after confirming that a missing record truly means no service or zero demand.
 
-1. Open **Start here**. Without an operator key, explore the read-only synthetic sample. Do not interpret it as local demand.
-2. With an authorized key, record the origin, destination, date, and verified total boardings for that route-day. Enter counts as you collect them; a CSV is optional.
-3. Keep the same route names and record daily observations. Missing dates are flagged unless you explicitly choose zero for a confirmed no-service/zero-demand day.
-4. After 28 continuous dates for each route, the app automatically refreshes the weekday-average baseline. After at least 118 continuous dates per route are available, choose **Train my forecast** and a forecast length to train ML and review its time-based backtest beside the baseline.
-5. Open **Forecasts** to review route/day estimates and approximate ranges. Compare later predictions with actual counts before using them to plan service.
+**Important:** a missing row is not automatically evidence of zero passengers. It may mean the service did not run, data was not collected, or an export is incomplete. Use an operator-verified service calendar and documented data rules before treating missing days as zero.
 
-This website forecasts **daily route boardings**; it does not predict an individual passenger, exact stop-to-stop load, or live crowding. The violet animated route graphic is decorative and does not represent real-time vehicle positions.
+### Minimum history guidance
 
-### Ingest from a scheduled daily export
+The application can use a weekday-average baseline after enough continuous observations are present. The README's operator workflow describes 28 continuous days for that baseline and at least 118 continuous days per route before requesting the ML training workflow. Actual model/backtest requirements also depend on forecast horizon and fold configuration; the training command will validate the supplied dataset.
 
-A company-managed scheduler or adapter can post validated daily counts to the authenticated `POST /api/data/ingest` endpoint:
+## Transit network and GTFS
+
+The GTFS Schedule importer supports standard feed files including:
+
+- `agency.txt`
+- `routes.txt`
+- `stops.txt`
+- `trips.txt`
+- `stop_times.txt`
+- `calendar.txt` and `calendar_dates.txt`
+- Optional `shapes.txt`
+
+The importer validates archive entries and feed relationships, checks coordinate ranges, and supports GTFS extended times after midnight (for example, `25:30:00`). The dashboard's Transit Network area can be used to inspect imported agencies, route details, service calendars, stop order, schedules, and available route shapes.
+
+GTFS schedules provide network and timetable context; they do **not** provide actual passenger boarding counts. They cannot replace ridership observations for supervised demand forecasting.
+
+## GTFS-Realtime and operations
+
+When a transit agency has a supported feed or a compatible integration configured, the repository provides services for:
+
+- **Vehicle positions:** GPS location, bearing, speed, vehicle status, stop sequence, and occupancy fields when supplied.
+- **Trip updates:** delays and predicted stop arrival/departure information.
+- **Service alerts:** active disruptions, causes, effects, time windows, and affected transit entities.
+- **Data quality filtering:** invalid coordinates, implausible GPS jumps, and stale telemetry handling.
+
+The API also includes operational modules for occupancy calculations, route capacity profiles, service-planning what-if scenarios, bus bunching/gap alerts, dispatch recommendations, and daily/capacity-risk reports.
+
+> **Integration status:** a live GTFS-Realtime provider, ticketing/APC feed, or vehicle telemetry source is not connected automatically by deploying the public demo. Configure and validate an approved provider, credentials, polling schedule, and data mapping before describing the application as live operations monitoring.
+
+## AI transit assistant
+
+The optional AI assistant uses OpenRouter when an API key is configured. It can answer transit questions using the application's available forecast and operational context, such as forecast summaries, route comparisons, and model explanations. When the provider is not configured or is unavailable, the application should return a clear configuration/provider message rather than relying on a fabricated answer.
+
+Configure the key only on the server. Never commit an API key to this repository or expose it in frontend JavaScript.
+
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_MODEL=openrouter/free
+```
+
+## API reference
+
+The API is served by the FastAPI application. The following are the main endpoint groups currently represented in the application code. Endpoints marked **protected** require the configured bearer-key authorization; exact permissions depend on the server's role configuration.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Basic service health |
+| `GET` | `/api/ready` | Readiness check for database, storage, and forecast initialization |
+| `GET` | `/api/status` | Protected application/data/model status |
+| `POST` | `/api/data/upload` | Protected daily ridership CSV upload |
+| `POST` | `/api/data/ingest` | Protected daily-count JSON ingestion/upsert |
+| `POST` | `/api/train` | Protected model training and evaluation |
+| `POST` | `/api/forecast` | Protected forecast refresh |
+| `GET` | `/api/forecast.csv` | Protected forecast CSV download |
+| `GET` | `/api/template.csv` | Download the blank daily-count CSV template |
+| `POST` | `/api/gtfs/upload` | Protected GTFS ZIP upload |
+| `GET` | `/api/gtfs/feeds`, `/api/gtfs/agencies` | Imported feed and agency listings |
+| `GET` | `/api/gtfs/routes`, `/api/gtfs/routes/{route_id}` | GTFS route catalog and details |
+| `GET` | `/api/gtfs/stops` | GTFS stop catalog/search |
+| `GET` | `/api/realtime/vehicles`, `/api/realtime/trip-updates`, `/api/realtime/alerts` | Realtime fleet, trip, and alert views |
+| `GET` | `/api/forecast/realtime/{route_id}`, `/api/forecast/intraday` | Intraday forecast endpoints |
+| `GET` | `/api/operations/alerts`, `/api/operations/dispatch-recommendations`, `/api/operations/metrics` | Operations and dispatch decision support |
+| `GET` | `/api/quality/drift-status`, `POST /api/quality/check-drift` | Data/model drift assessment |
+| `GET` | `/api/model/benchmark` | Multi-model benchmark results |
+| `POST` | `/api/simulator/evaluate` | Service-planning scenario evaluation |
+| `GET` | `/api/reports/daily`, `/api/reports/daily/csv` | Daily passenger reports |
+| `GET` | `/api/reports/capacity-risk` | Capacity-risk report |
+| `GET` | `/api/ai/status`, `POST /api/ai/chat` | AI assistant configuration and chat |
+
+For the precise request schema and response model, consult the route definitions in `src/app.py` and the Pydantic request models in the same module. Do not assume an endpoint is connected to a live external data provider merely because the route exists.
+
+### Scheduled daily-count ingestion example
+
+An operator-managed scheduler can send validated route/day records to `POST /api/data/ingest`:
 
 ```json
 {
@@ -159,194 +280,225 @@ A company-managed scheduler or adapter can post validated daily counts to the au
 }
 ```
 
-Send the payload with `Content-Type: application/json` and `Authorization: Bearer <operator-key>`. Each request accepts up to 5,000 route-day records. A retry safely replaces matching route/date rows; duplicate keys inside one batch are rejected. Missing dates are flagged by default. Use `"missing_days": "zero"` only when the operator confirms those gaps mean zero service or zero demand. Ingestion refreshes forecasts with the existing model; it does not automatically retrain. Schedule retraining and a backtest review separately. The endpoint is an integration contract, not a plug-and-play connection to a vendor feed.
+Send `Content-Type: application/json` and `Authorization: Bearer <operator-key>`. Matching route/date records are upserted so retries do not multiply counts. Missing dates are rejected by default; use a zero-fill policy only when the data owner has confirmed its meaning. Ingestion refreshes forecasts using the available model; it does not automatically replace the model-training and backtesting review process.
 
-The data page shows source update time and a small aggregate activity log. It stores event counts and source labels, not passenger rows. Local app data and this log are stored under the app data folder. The public Render demo uses temporary storage, so its data and activity history can disappear after a restart. Use persistent, access-controlled, backed-up storage before company operations.
+## Technology stack
 
-### Get the Windows app
+| Layer | Technologies |
+|---|---|
+| Language | Python 3.10+ |
+| API | FastAPI, Pydantic |
+| Data processing | pandas, NumPy |
+| Machine learning | scikit-learn, joblib |
+| Database | SQLite / PostgreSQL, SQLAlchemy, Alembic |
+| Frontend | HTML, CSS, JavaScript |
+| Transit data | GTFS Schedule, optional GTFS-Realtime / Protocol Buffers |
+| AI integration | OpenRouter API (optional) |
+| Testing | Python `unittest` and JavaScript/Node test suite |
+| Deployment | Render configuration, Docker support, GitHub Actions |
+| App clients | Progressive Web App and PyInstaller Windows build |
 
-The **Build Windows desktop app** GitHub Actions workflow packages a Windows build after relevant changes land on `main`. Open the repository's Actions tab, select the latest successful **Build Windows desktop app** run, and download its `BusDemandForecast-Windows` artifact. Extract the ZIP and run `BusDemandForecast.exe` from the included folder. The workflow artifact expires after 30 days; rebuild or retain it according to your release process.
+## Run locally
 
-**First launch on Windows:** This downloadable build is not code-signed, so SmartScreen may say “Windows protected your PC” because it cannot verify the publisher. Only use the ZIP downloaded from this repository’s [Windows build workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/build-app.yml). In the ZIP’s **Properties**, select **Unblock** if Windows shows that option, apply it, and then extract the folder. If SmartScreen still appears, choose **More info** → **Run anyway** only after verifying the source and workflow. Managed company devices may block unsigned apps by policy. Removing the warning for all users requires an organization-owned, trusted Authenticode signing certificate; do not disable Defender or other security settings.
+### 1. Clone the repository
 
-### Host for Android and shared use
+```bash
+git clone https://github.com/Vital1506/bus-passenger-demand-forecasting.git
+cd bus-passenger-demand-forecasting
+```
 
-The repository includes a Docker image for an approved Linux host. It requires a bearer key and should be served behind HTTPS. Mount persistent storage at `/var/lib/bus-forecast`; otherwise uploads and model files can be lost when the container is replaced.
+### 2. Create and activate a virtual environment
 
-#### Deploy a public demo website
+**Windows PowerShell**
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2FVital1506%2Fbus-passenger-demand-forecasting)
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
 
-The included `render.yaml` configures the API and dashboard as one HTTPS website and generates a bearer key during deployment. Open the [live website](https://bus-demand-forecast-4jmb.onrender.com/) to see the public read-only synthetic preview. The public preview cannot upload company data or trigger model training. To use operator features, copy `BUS_FORECAST_API_KEY` from the Render environment settings and save it in **Settings**. `/health` and `/api/health` provide health checks; `/api/template.csv` always downloads the blank schema; `/api/forecast.csv` returns an empty but valid CSV with `X-Forecast-Status: not-ready` until a forecast exists.
+**Linux / macOS**
 
-This free setup is for demonstration only: it can sleep when idle and its filesystem is temporary, so uploaded data and trained models can be lost after a restart or redeploy. Do not upload company data to this demo. For operational use, choose an approved paid host with persistent storage, HTTPS, access controls, backups, and company approval before importing data.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+### 3. Install dependencies
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+For the Windows desktop launcher, also install:
+
+```bash
+python -m pip install -r requirements-desktop.txt
+```
+
+### 4. Start the application
+
+```bash
+python -m uvicorn src.app:app --host 127.0.0.1 --port 8000
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser. The local API's health route is `/api/health` and readiness route is `/api/ready`.
+
+### 5. Run the Windows desktop launcher (optional)
+
+```powershell
+python desktop_launcher.py
+```
+
+The launcher starts a local API and opens the dashboard in a native WebView window. Local application data is stored in the signed-in user's application-data folder by default.
+
+## Train and generate forecasts
+
+### Train from the bundled synthetic sample
+
+```bash
+python -m src.train \
+  --data data/sample_daily_ridership.csv \
+  --horizon 7 \
+  --folds 4
+```
+
+On Windows PowerShell, run the command on one line or use PowerShell's backtick for line continuation.
+
+### Fetch and train on public MTA historical data
+
+The workflow supports the public MTA Bus Hourly Ridership dataset, which is historical data rather than a live feed. Example for route M15:
+
+```bash
+python -m src.fetch_mta_daily --routes M15 --output artifacts/mta_daily_ridership.csv
+python -m src.train --data artifacts/mta_daily_ridership.csv --missing-days zero --horizon 7 --folds 4 --holdout-days 28
+```
+
+Review the service calendar before interpreting zero-filled dates as days with no service or zero demand.
+
+### Generate a forecast
+
+```bash
+python -m src.forecast \
+  --data data/sample_daily_ridership.csv \
+  --model artifacts/model.joblib \
+  --days 7 \
+  --output outputs/forecast.csv
+```
+
+The forecast horizon must be compatible with the saved model bundle's training horizon. The CLI validates route history and refuses to silently invent missing passenger observations.
+
+## Configuration
+
+Set environment variables in your local environment or hosting provider's secret manager. Keep `.env` files and all secrets out of Git.
+
+| Variable | Purpose |
+|---|---|
+| `BUS_FORECAST_API_KEY` | Unified bearer key where a single shared key is appropriate |
+| `BUS_FORECAST_OPERATOR_KEY` | Operator access key |
+| `BUS_FORECAST_ADMIN_KEY` | Administrative access key for protected management actions |
+| `DATABASE_URL` | Optional PostgreSQL connection string; SQLite is the local default |
+| `BUS_FORECAST_DATA_DIR` | Optional directory for persistent application data and artifacts |
+| `OPENROUTER_API_KEY` | Optional server-side key for the AI assistant |
+| `OPENROUTER_MODEL` | Optional OpenRouter model identifier; defaults to `openrouter/free` |
+
+Example PostgreSQL configuration:
+
+```env
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+BUS_FORECAST_OPERATOR_KEY=replace-with-a-long-random-secret
+BUS_FORECAST_ADMIN_KEY=replace-with-a-different-long-random-secret
+```
+
+Database migrations are managed with Alembic:
+
+```bash
+alembic upgrade head
+```
+
+For legacy CSV/JSON migration, see [MIGRATIONS.md](MIGRATIONS.md). Review the documented backup and dry-run options before migrating valuable data.
+
+## Desktop and mobile app
+
+### Windows desktop
+
+The repository includes a `desktop_launcher.py` entry point and a GitHub Actions workflow that packages a Windows desktop build. To obtain the latest package, open the [Build Windows desktop app workflow](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/build-app.yml), select a successful run, and download the `BusDemandForecast-Windows` artifact when available. Workflow artifacts are retained for a limited period, so download and archive releases you need to keep.
+
+The desktop executable is not code-signed. Windows SmartScreen may display a publisher warning. Download builds only from the repository's official Actions workflow and follow your organization's software policy; do not disable Defender or other security controls to run an unfamiliar executable.
+
+### Android / mobile
+
+The dashboard is responsive and can be installed as a Progressive Web App (PWA): open the approved HTTPS deployment in Chrome on Android and select **Install app** or **Add to Home screen** when offered. This repository does not currently provide a Play Store APK.
+
+## Deployment
+
+### Live public demo
+
+<div align="center">
+  <a href="https://bus-passenger-demand-forecasting-xgx2.onrender.com"><img src="https://img.shields.io/badge/LAUNCH%20BUS%20DEMAND%20DASHBOARD-OPEN%20LIVE%20APP-137F83?style=for-the-badge&logo=render&logoColor=white" alt="Launch live bus demand dashboard" /></a>
+</div>
+
+**Live URL:** <https://bus-passenger-demand-forecasting-xgx2.onrender.com>
+
+The public demo is intended for exploration and feedback. It uses synthetic sample records and is read-only. A free hosting instance may sleep while idle, so the first visit can take time to start. Its filesystem is not a durable storage layer; demo data, uploads, and artifacts may not survive a restart or redeploy.
+
+### Deploy your own instance
+
+The repository includes a Render Blueprint and Docker support. For an approved deployment, configure secrets in the hosting dashboard, serve the application over HTTPS, and attach persistent storage for the configured data directory. A basic Docker example is:
 
 ```bash
 docker build -t bus-demand-forecast .
 docker run --rm -p 8000:8000 \
   -e BUS_FORECAST_API_KEY='replace-with-a-long-random-secret' \
-  -v bus-demand-data:/var/lib/bus-forecast \
+  -v bus-forecast-data:/var/lib/bus-forecast \
   bus-demand-forecast
 ```
 
-Configure the host's HTTPS domain and Android-device access with your infrastructure administrator before using operational data. If the Windows desktop client will connect to that hosted API, configure `BUS_FORECAST_CORS_ORIGINS` on the API for the desktop origins `http://127.0.0.1:8765` and `http://localhost:8765`. The hosted mode's shared bearer key is a prototype access gate, not company SSO or role-based authorization. Use only approved infrastructure and data until authentication, retention, backups, access controls, privacy review, and operational sign-off are complete.
+Before importing operational data, verify the container's configured data directory, database URL, authentication policy, backups, and restore procedure. Persistent storage alone is not a backup strategy.
 
-## Current stage: prototype
+## Tests and model training
 
-Use the live synthetic demo to show the dashboard, forecasts, route scenarios, and exports and to gather feedback. It is designed for evaluation with generated sample counts; company data and a paid hosting upgrade are not part of this phase.
+Run the Python test suite:
 
-## Later phase: company pilot (after approval)
-
-The separate [company pilot runbook](COMPANY_PILOT.md) defines data, access, forecast-acceptance, shadow-operation, backup/restore, and rollback gates. A separate [paid Render pilot blueprint](render.company.yaml) provides persistent storage at `/var/lib/bus-forecast`; it does not change the free demo configuration. This is a later phase. The pilot blueprint is optional and incurs hosting charges if created; do not create it during prototype review. Revisit the runbook only after your organization approves a company-data pilot.
-
-The pilot blueprint is still a single-instance deployment with a shared bearer-key gate. It does not provide SSO, user roles, high availability, or an automated backup/restore service. Do not load company data until the company approves the access model and hosting environment and the pilot gates are signed off. Persistent storage alone is not a backup or enterprise security control.
-
-## Forecast contract
-
-- Grain: one row per route and calendar service date.
-- Target: nonnegative passenger boarding count (`passengers`).
-- Default forecast horizon: 7 days.
-- Inputs: recent demand lags, trailing means/variation, day-of-week, weekend, month, and annual seasonality.
-- Model: scikit-learn histogram gradient boosting with one-hot route encoding.
-- Model-selection backtest: expanding-window, rolling-origin evaluation at the same multi-day horizon used for forecasting (4 folds × 7 days by default), followed by a separate 28-day walk-forward holdout in the training workflow.
-- Comparator: seasonal naive, repeating each route's count from the same weekday one week earlier.
-- Metrics: MAE, RMSE, and WAPE overall and by route.
-- Forecast ranges: route-specific 90th-percentile absolute out-of-fold error, displayed as a symmetric approximate band. This is not a formally calibrated prediction interval.
-
-Every model forecast is recursive: predictions earlier in the requested horizon feed lag features for later dates. Historical validation follows that same process. This avoids evaluating a one-step model as if it were a multi-day forecasting system.
-
-## Enterprise transit intelligence capabilities
-
-### 1. Standardized APC / AFC observation pipeline
-- **Direct ingestion:** accepts automated passenger count (APC) and fare collection (AFC) records via `POST /api/passenger-data/upload`.
-- **Integrity validation:** validates route identifiers, calendar dates, non-negative boardings and alightings, optional GPS timestamps, trip sequences, and vehicle assignments.
-- **Idempotency:** duplicate records are resolved without ever multiplying passenger counts on repeated uploads.
-- **Audit tracking:** records each batch into versioned `import_jobs` with SHA-256 checksums and execution durations.
-
-### 2. Passenger occupancy & capacity intelligence
-- **Conservation equation:** strictly implements stop-level passenger conservation along verified transit paths:
-  $$\text{Occupancy}_n = \text{Occupancy}_{n-1} + \text{Boardings}_n - \text{Alightings}_n$$
-- **Physical validation:** non-negative passenger load clamping with anomaly disclosure; explicit overcapacity flags when load exceeds verified vehicle capacity.
-- **Vehicle assets:** queries trusted fleet capacity configurations (`vehicles` table: seated, standing, and total capacity).
-- **APIs:** `GET /api/occupancy/trip/{trip_id}`, `GET /api/occupancy/route/{route_id}`.
-
-### 3. Multi-model ML benchmarking & empirical prediction intervals
-- **Candidate models:** compares `HistGradientBoostingRegressor`, `RandomForestRegressor`, and `ExtraTreesRegressor` against recursive `SeasonalNaive`.
-- **Leaderboard:** ranks models on out-of-fold holdout WAPE, MAE, and RMSE via `GET /api/model/benchmark`.
-- **Calibrated intervals:** derives empirical 90% error ranges ($Q_{0.05}$ and $Q_{0.95}$) directly from historical holdout residuals rather than unverified symmetric approximations.
-
-### 4. Intelligent service planning simulator
-- **What-if decision support:** interactive simulation comparing planned frequency/capacity against forecast passenger demand (`POST /api/simulator/evaluate`).
-- **Scenario controls:** test headway adjustments (+/- trips per hour), fleet capacity allocations, and operating hours.
-- **Operational metrics:** quantifies capacity buffers, seat utilization percentages, and crowding risk levels (`LOW`, `MODERATE`, `HIGH`, `CRITICAL`).
-
-### 5. Operational reporting & webhook dispatching
-- **Daily passenger summaries:** generates route-by-route boarding totals via `GET /api/reports/daily` and CSV streams via `GET /api/reports/daily/csv`.
-- **Capacity risk reports:** lists overcapacity and overcrowding incidents via `GET /api/reports/capacity-risk`.
-- **Webhook dispatching:** sends real-time incident payloads to operational monitoring systems via `POST /api/reports/webhook`.
-
-### 6. Security, RBAC & agency tenant isolation
-- **Three-tier RBAC:** `ADMINISTRATOR` (model training, GTFS upload, migrations), `OPERATOR` (telemetry, dispatch, count ingestion), and `ANALYST` (read-only queries).
-- **Tenant isolation:** agency-scoped queries and data filtering prevent cross-operator contamination.
-- **Key resolution:** supports `BUS_FORECAST_ADMIN_KEY`, `BUS_FORECAST_OPERATOR_KEY`, `BUS_FORECAST_ANALYST_KEY`, and unified `BUS_FORECAST_API_KEY`.
-
-## Setup
-
-Python 3.10 or newer is required.
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-## Data format
-
-CSV required columns:
-
-| Column | Meaning |
-|---|---|
-| `service_date` | Local service date in `YYYY-MM-DD` format |
-| `route_id` | Stable route identifier |
-| `passengers` | Nonnegative passenger boardings for that route and date |
-
-Use one row per route/date; aggregate at the source or resolve duplicate rows. Counts must be finite and nonnegative. Dates need to be continuous for each route through the latest system date. Missing dates fail by default because an absent record may mean missing data, no service, or zero demand. Choose `--missing-days zero` only after operations confirms that interpretation. Canceled service should ideally be represented by an explicit service calendar instead of silently equated to zero demand.
-
-The training workflow currently consumes daily counts only. Holidays, school terms, scheduled service, disruptions, weather, and major events are valuable future-known signals but are not yet features. They should be integrated only with an as-of-time rule so historical training does not see information unavailable when the forecast would have been made.
-
-## Run the checks, backtest, and forecast
-
-The included sample is synthetic and only demonstrates the workflow.
-
-```powershell
+```bash
 python -m unittest discover -s tests
-python -m src.profile_data --data data/sample_daily_ridership.csv
-python -m src.train --data data/sample_daily_ridership.csv --horizon 7 --folds 4
-python -m src.forecast --data data/sample_daily_ridership.csv --model artifacts/model.joblib --days 7 --output outputs/forecast.csv
 ```
 
-The unit checks cover fail-closed missing-date handling, explicit zero filling, lag leakage, and recursive seasonal-naive behavior. Run them in the same Python environment used for training.
+The repository also contains frontend/JavaScript tests and GitHub Actions workflows for Python checks, model training, and Windows packaging. Review the [Actions tab](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions) for the latest workflow results rather than relying on a static status number in this document.
 
-`train` writes:
+The automated checks cover important data-validation and forecasting behaviors, but passing tests cannot prove that every deployment, external feed, dataset, or operating environment is defect-free. Validate the application against the systems and data it will actually use.
 
-- `artifacts/model.joblib`: fitted model, training cutoff, selected horizon, route list, calibration bands, and backtest metrics.
-- `artifacts/backtest_metrics.json`: overall and route-level comparisons against the seasonal-naive baseline.
-- `artifacts/backtest_predictions.csv`: each out-of-fold actual, model prediction, baseline prediction, and fold.
+## Limitations and responsible use
 
-`forecast` writes `service_date`, `route_id`, `predicted_passengers`, `lower_90_approx`, and `upper_90_approx`. It rejects data older than the model cutoff, previously unseen routes, excessive requested horizons, and discontinuous history unless the zero-fill policy is explicitly chosen. Train with a longer `--horizon` before requesting a longer forecast.
+This is an actively developed prototype and decision-support project. It should not be described as a production-certified transit platform or as a guaranteed accurate forecasting service.
 
-## Interpretation and deployment path
+- The public demo uses synthetic data and is not evidence of real-world forecast accuracy.
+- MTA experiment results cover one historical route and cannot establish generalization to other agencies or future periods.
+- A missing route/date record can mean missing data, no service, or zero demand. Confirm the correct interpretation with a service calendar and data owner.
+- A live ticketing, APC/AFC, AVL, or GTFS-Realtime provider must be configured and validated separately; one is not automatically connected by opening the demo.
+- Holidays, school terms, service changes, weather, disruptions, and special events are not all included as future-known predictors in the daily forecasting model.
+- Error bands are historical-residual approximations, not formal guarantees.
+- Before a company pilot, complete data governance, access-control, privacy, security, backup/restore, monitoring, shadow-mode, and operational acceptance reviews.
 
-1. Confirm boardings vs. alightings, service-day boundary/time zone, route variants, and route ID changes.
-2. Reconcile passenger counts to the source system and document how APC/manual corrections are handled.
-3. Review data gaps, canceled-service dates, route starts/ends, and abnormal counts before training.
-4. Run the rolling backtest and inspect every route. The model should beat the baseline consistently enough for the business use case; investigate any regression.
-5. Keep a final untouched time period for sign-off. The rolling folds are for model selection, so they should not be the sole final acceptance evidence.
-6. Run in shadow mode and save each forecast, input cutoff, model version, actual outcome, and error. Agree thresholds, fallback behavior, ownership, and retraining cadence with operations.
-7. Add service schedules, holidays, weather forecasts, school calendars, events, and disruptions as versioned, forecast-time-available features. Evaluate capacity planning needs separately from average demand forecasting.
+For a structured pilot checklist, see [COMPANY_PILOT.md](COMPANY_PILOT.md). Do not upload confidential company or passenger data to the public demonstration deployment.
 
-## OpenRouter AI Transit Intelligence Assistant
+## Project resources
 
-The platform integrates OpenRouter AI to provide conversational transit operations intelligence grounded directly in actual machine learning forecasts and transit network telemetry.
+| Resource | Link |
+|---|---|
+| Live application | [Open the dashboard](https://bus-passenger-demand-forecasting-xgx2.onrender.com) |
+| Source repository | [GitHub repository](https://github.com/Vital1506/bus-passenger-demand-forecasting) |
+| Model training workflow | [GitHub Actions](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/train-model.yml) |
+| Windows build workflow | [GitHub Actions](https://github.com/Vital1506/bus-passenger-demand-forecasting/actions/workflows/build-app.yml) |
+| Migration guide | [MIGRATIONS.md](MIGRATIONS.md) |
+| Company pilot checklist | [COMPANY_PILOT.md](COMPANY_PILOT.md) |
+| MTA historical ridership source | [NY Open Data](https://data.ny.gov/Transportation/MTA-Bus-Hourly-Ridership-2020-2024/kv7t-n8in) |
 
-### Key Capabilities
-- **Demand Explanations:** Ask about tomorrow's predicted demand across the system or for specific routes.
-- **Route Rankings:** Identify the busiest and lowest-demand routes based on ML predictions.
-- **Operational & Crowding Alerts:** Discover trips at risk of overcapacity or bunching, with recommendations for additional bus dispatch or headway adjustments.
-- **Strict Grounding:** The assistant strictly uses verified local artifacts (`forecast.csv`, `metrics.json`, `daily_ridership.csv`). It never hallucinates numbers or fabricates model accuracy metrics.
-- **Graceful Unconfigured Fallback:** If an API key is not configured, the assistant provides clear guidance without throwing unhandled errors or crashing.
+---
 
-### Environment Configuration
-
-Configure the following environment variables in your `.env` file (local) or Render Dashboard:
-
-```env
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-OPENROUTER_MODEL=openrouter/free
-```
-
-- `OPENROUTER_API_KEY`: Your secret OpenRouter API key. Kept strictly on the backend; never exposed to browser clients or network responses.
-- `OPENROUTER_MODEL`: OpenRouter model identifier (default: `openrouter/free`).
-
-### API Endpoints
-
-- `GET /api/ai/status`
-  - Returns whether OpenRouter AI is configured, the active model name, and provider information.
-- `POST /api/ai/chat`
-  - Body: `{"message": "What is the predicted passenger demand for tomorrow?", "history": [], "route_id": "optional"}`
-  - Returns: `{"status": "ok", "reply": "...", "model": "openrouter/free", "context_summary": {...}}`
-  - Protected by sliding-window rate limiting (30 requests/minute) and existing authentication architecture.
-
-### UI Features
-- **Floating AI Assistant (FAB):** Bottom-right action button with live connection status indicator.
-- **Expandable Chat Panel:** Desktop drawer and mobile-responsive bottom sheet.
-- **Suggested Question Chips:** Instant 1-click queries for demand forecasts, crowding risks, and model explanations.
-- **Conversation Management:** Session chat history and quick clear conversation action.
-
-### Troubleshooting
-- **503 / "API key is not configured":** Add `OPENROUTER_API_KEY` to your environment variables or Render service settings.
-- **401 / "Invalid API key":** Verify that your OpenRouter key is active and correctly pasted without whitespace.
-- **429 / "Rate limit exceeded":** The OpenRouter free tier or local client rate limiter was reached; wait a moment before retrying.
-
-This repository includes a generic authenticated daily-count ingestion endpoint and a prototype route-planning review signal. It does not include a vendor-specific connector, scheduler, live telemetry adapter, service-calendar logic, monitoring service, capacity optimizer, durable audit archive, SSO/roles, or privacy/security review. Those depend on company systems and requirements. No company data was provided; do not treat sample metrics as evidence of real-world performance.
-
+<div align="center">
+  <p><strong>Built to make transit demand easier to inspect, explain, and evaluate.</strong></p>
+  <p>Bus Passenger Demand Forecasting · <a href="https://github.com/Vital1506">Vital1506</a></p>
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:137F83,55:123B46,100:0B1F2A&height=110&section=footer&animation=twinkling" width="100%" alt="Animated footer banner" />
+</div>
