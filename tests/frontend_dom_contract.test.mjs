@@ -94,7 +94,7 @@ test("service worker and app script employ cache-busting and bypass health/ready
   assert.match(sw, /url\.pathname === ["']\/health["']/);
   assert.match(sw, /url\.pathname === ["']\/ready["']/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
-  assert.match(sw, /\/static\/app\.js\?v=12/);
+  assert.match(sw, /\/static\/app\.js\?v=13/);
 });
 
 test("public dashboard opens before the sample forecast request finishes", () => {
