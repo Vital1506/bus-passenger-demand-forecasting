@@ -42,5 +42,5 @@ jobs:
         run: node --test tests/*.test.mjs
 
       - name: Run tests with coverage
-        run: python -m pytest --cov=src --cov-report=term-missing -q
+        run: python -m pytest --cov=src --cov-report=term-missing -v --tb=short
 
