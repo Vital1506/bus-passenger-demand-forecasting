@@ -76,9 +76,12 @@ def compute_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, floa
 
 def calibrate_empirical_intervals(residuals: np.ndarray) -> tuple[float, float]:
     """Calculate empirical 90% error intervals (5th and 95th percentiles) from historical residuals."""
+    if len(residuals) == 0:
+        raise ValueError("Insufficient data: cannot calibrate empirical error intervals without residuals")
+
     if len(residuals) < 10:
-        std = float(np.std(residuals)) if len(residuals) > 0 else 50.0
-        return -1.645 * std, 1.645 * std
+        std = float(np.std(residuals))
+        return round(-1.645 * std, 2), round(1.645 * std, 2)
 
     lower_offset = float(np.percentile(residuals, 5.0))
     upper_offset = float(np.percentile(residuals, 95.0))

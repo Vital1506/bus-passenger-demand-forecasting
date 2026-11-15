@@ -71,3 +71,25 @@ def test_multi_model_benchmark_execution():
     # Check champion flag exists
     champions = [e for e in res["leaderboard"] if e["is_champion"]]
     assert len(champions) == 1
+
+
+def test_b7_empirical_intervals_raises_on_empty_residuals():
+    """Verify B7: empty residuals raises ValueError instead of returning magic 50.0 fallback."""
+    with pytest.raises(ValueError, match="Insufficient data"):
+        calibrate_empirical_intervals(np.array([]))
+
+
+def test_b6_dynamic_model_versioning(monkeypatch):
+    """Verify B6: model version is derived dynamically, not hardcoded."""
+    from src.train import get_model_version
+
+    # Explicit override
+    monkeypatch.setenv("BUS_FORECAST_MODEL_VERSION", "2.1.0-custom")
+    assert get_model_version() == "2.1.0-custom"
+
+    # Dynamic date-based default
+    monkeypatch.delenv("BUS_FORECAST_MODEL_VERSION", raising=False)
+    ver = get_model_version()
+    assert ver.startswith("1.0.0+")
+    assert len(ver) > 10
+

@@ -1455,14 +1455,56 @@ def get_route_realtime_forecast(
     route_id: str,
     baseline_passengers: float | None = None,
 ) -> dict[str, Any]:
-    base_val = float(baseline_passengers) if baseline_passengers is not None else 2500.0
+    base_val = float(baseline_passengers) if baseline_passengers is not None else None
+    if base_val is None:
+        if FORECAST_PATH.exists():
+            try:
+                fdf = pd.read_csv(FORECAST_PATH)
+                match = fdf[fdf["route_id"].astype(str) == str(route_id)]
+                if not match.empty:
+                    base_val = float(match.iloc[0]["predicted_passengers"])
+            except Exception:
+                pass
+        if base_val is None and PUBLIC_DEMO_CACHE is not None:
+            try:
+                for fc in PUBLIC_DEMO_CACHE.get("forecasts", []):
+                    if str(fc.get("route_id")) == str(route_id):
+                        base_val = float(fc.get("predicted_passengers", 0.0))
+                        break
+            except Exception:
+                pass
+        if base_val is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No trained daily forecast baseline available for route '{route_id}'. Please train a model or specify baseline_passengers.",
+            )
+
     forecast = build_intraday_route_forecast(route_id=route_id, daily_baseline_passengers=base_val)
     return forecast.to_dict()
 
 
 @app.get("/api/forecast/intraday", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_intraday_network_curve() -> dict[str, Any]:
-    return build_network_intraday_curve()
+    network_base = None
+    if FORECAST_PATH.exists():
+        try:
+            fdf = pd.read_csv(FORECAST_PATH)
+            if not fdf.empty and "predicted_passengers" in fdf.columns:
+                first_date = fdf["service_date"].min()
+                day_slice = fdf[fdf["service_date"] == first_date]
+                network_base = float(day_slice["predicted_passengers"].sum())
+        except Exception:
+            pass
+    if network_base is None and PUBLIC_DEMO_CACHE is not None:
+        try:
+            forecasts = PUBLIC_DEMO_CACHE.get("forecasts", [])
+            if forecasts:
+                first_date = min(fc["service_date"] for fc in forecasts if "service_date" in fc)
+                network_base = float(sum(fc["predicted_passengers"] for fc in forecasts if fc.get("service_date") == first_date))
+        except Exception:
+            pass
+
+    return build_network_intraday_curve(network_daily_base=network_base if network_base is not None else 50000.0)
 
 
 @app.get("/api/operations/alerts", dependencies=[Depends(require_role(UserRole.ANALYST))])

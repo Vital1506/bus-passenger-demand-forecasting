@@ -11,15 +11,43 @@ Features:
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .realtime.models import OccupancyStatus
 from .realtime.service import get_realtime_service
 
 # Standard 40-foot transit bus nominal capacity (seated + standing)
 DEFAULT_BUS_CAPACITY = 55
+DEFAULT_TIMEZONE = "America/Chicago"
+
+
+def get_agency_timezone(agency_id: str | None = None) -> ZoneInfo:
+    """Retrieve configured IANA timezone for the transit agency, falling back safely."""
+    env_key = f"BUS_FORECAST_TIMEZONE_{agency_id.upper()}" if agency_id else None
+    tz_name = (os.getenv(env_key) if env_key else None) or os.getenv("BUS_FORECAST_TIMEZONE") or DEFAULT_TIMEZONE
+    try:
+        return ZoneInfo(tz_name.strip())
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def get_current_local_time(agency_id: str | None = None) -> datetime:
+    """Return current timestamp in agency local timezone."""
+    tz = get_agency_timezone(agency_id)
+    return datetime.now(tz)
+
+
+def get_current_hour_local(agency_id: str | None = None) -> int:
+    """Return current hour (0-23) in agency local timezone."""
+    return get_current_local_time(agency_id).hour
+
+
+def get_current_hour_utc() -> int:
+    return datetime.now(timezone.utc).hour
 
 # Standard urban transit 24-hour demand distribution weights (sum normalized to 1.0)
 DIURNAL_WEIGHTS = [
@@ -95,15 +123,18 @@ def build_intraday_route_forecast(
     daily_baseline_passengers: float = 2400.0,
     current_hour: int | None = None,
     capacity: int = DEFAULT_BUS_CAPACITY,
+    agency_id: str | None = None,
+    target_date: str | None = None,
 ) -> IntradayRouteForecast:
-    """Compute real-time calibrated intraday forecast for a route."""
-    now_hour = current_hour if current_hour is not None else get_current_hour_utc()
-    target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Compute real-time calibrated intraday forecast for a route using agency local timezone."""
+    now_dt = get_current_local_time(agency_id)
+    now_hour = current_hour if current_hour is not None else now_dt.hour
+    effective_target_date = target_date or now_dt.strftime("%Y-%m-%d")
 
     # Fetch live telemetry from RealtimeService
     rt_service = get_realtime_service()
-    vehicles = rt_service.get_vehicles(route_id=route_id)
-    trip_updates = rt_service.get_trip_updates(route_id=route_id)
+    vehicles = rt_service.get_vehicles(route_id=route_id, agency_id=agency_id)
+    trip_updates = rt_service.get_trip_updates(route_id=route_id, agency_id=agency_id)
 
     is_calibrated = len(vehicles) > 0
 
@@ -127,13 +158,14 @@ def build_intraday_route_forecast(
 
     for h in range(24):
         base_h = daily_total * NORMALIZED_DIURNAL[h]
-        # Real-time calibration for upcoming hours
-        if is_calibrated and (now_hour <= h <= (now_hour + 3) % 24):
+        # Real-time calibration for upcoming hours (modular arithmetic fixes hour 21-23 wraparound bug)
+        is_upcoming_window = (h - now_hour) % 24 <= 3
+        if is_calibrated and is_upcoming_window:
             calibrated_h = base_h * delay_multiplier
         else:
             calibrated_h = base_h
 
-        # Uncertainty error bounds (+/- 15% to 25%)
+        # Uncertainty error bounds: heuristic ratio multipliers (renamed/documented)
         lower = max(0, int(round(calibrated_h * 0.82)))
         upper = int(round(calibrated_h * 1.22))
         point = int(round(calibrated_h))
@@ -144,8 +176,12 @@ def build_intraday_route_forecast(
             "predicted_boardings": point,
             "lower_90": lower,
             "upper_90": upper,
+            "lower_90_heuristic": lower,
+            "upper_90_heuristic": upper,
+            "interval_method": "heuristic_ratio",
             "is_past": h < now_hour,
             "is_current": h == now_hour,
+            "is_calibrated": is_calibrated and is_upcoming_window,
         })
 
     # Projections
@@ -169,7 +205,7 @@ def build_intraday_route_forecast(
 
     return IntradayRouteForecast(
         route_id=route_id,
-        target_date=target_date,
+        target_date=effective_target_date,
         current_hour=now_hour,
         daily_baseline_boardings=daily_total,
         is_realtime_calibrated=is_calibrated,
@@ -184,12 +220,16 @@ def build_intraday_route_forecast(
     )
 
 
-def build_network_intraday_curve(current_hour: int | None = None) -> dict[str, Any]:
+def build_network_intraday_curve(
+    current_hour: int | None = None,
+    network_daily_base: float = 50000.0,
+    agency_id: str | None = None,
+) -> dict[str, Any]:
     """Aggregate network-wide intraday passenger demand curve across all operational hours."""
-    now_hour = current_hour if current_hour is not None else get_current_hour_utc()
+    now_hour = current_hour if current_hour is not None else get_current_hour_local(agency_id)
     rt_service = get_realtime_service()
-    all_vehicles = rt_service.get_vehicles()
-    all_updates = rt_service.get_trip_updates()
+    all_vehicles = rt_service.get_vehicles(agency_id=agency_id)
+    all_updates = rt_service.get_trip_updates(agency_id=agency_id)
 
     total_active_vehs = len(all_vehicles)
     total_onboard = sum(
@@ -200,8 +240,7 @@ def build_network_intraday_curve(current_hour: int | None = None) -> dict[str, A
     delays = [tu.get("delay") for tu in all_updates if tu.get("delay") is not None]
     avg_network_delay = sum(delays) / len(delays) if delays else 0.0
 
-    # Build 24h curve (assuming nominal network volume of 50,000 daily boardings if not configured)
-    network_daily_base = 50000.0
+    # Build 24h curve using provided or nominal network baseline
     curve = []
     for h in range(24):
         base_h = network_daily_base * NORMALIZED_DIURNAL[h]
@@ -211,6 +250,8 @@ def build_network_intraday_curve(current_hour: int | None = None) -> dict[str, A
             "predicted_network_boardings": int(round(base_h)),
             "lower_90": int(round(base_h * 0.85)),
             "upper_90": int(round(base_h * 1.18)),
+            "lower_90_heuristic": int(round(base_h * 0.85)),
+            "upper_90_heuristic": int(round(base_h * 1.18)),
             "is_past": h < now_hour,
             "is_current": h == now_hour,
         })

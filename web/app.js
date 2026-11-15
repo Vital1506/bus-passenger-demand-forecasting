@@ -12,7 +12,7 @@ async function api(path, options = {}) {
   if (accessKey()) headers.set("Authorization", `Bearer ${accessKey()}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 25000 : 90000);
+  const timeout = window.setTimeout(() => controller.abort(), path === "/health" || path === "/api/health" ? 75000 : 90000);
   try {
     const response = await fetch(`${apiBase()}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
     const type = response.headers.get("content-type") || "";
@@ -1236,7 +1236,7 @@ async function refreshStatus() {
   return connected;
 }
 async function waitForServer() {
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 90000;
   const delays = [800, 1500, 3000, 5000];
   let attempt = 0;
   let lastError = null;

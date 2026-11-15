@@ -6,6 +6,7 @@ and operational recommendations into a grounded, conversational AI assistant.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -370,114 +371,137 @@ async def call_openrouter_api(
         "model": target_model,
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": 1000,
+        "max_tokens": int(os.getenv("OPENROUTER_MAX_TOKENS", "2500")),
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                OPENROUTER_COMPLETIONS_URL,
-                headers=headers,
-                json=payload,
-            )
+    # Support a single automatic retry on transient upstream disconnects / busy responses
+    last_err: dict[str, Any] | None = None
+    for attempt in range(2):
+        if attempt > 0:
+            await asyncio.sleep(1.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    OPENROUTER_COMPLETIONS_URL,
+                    headers=headers,
+                    json=payload,
+                )
 
-        if response.status_code == 200:
-            try:
-                data = response.json()
-            except Exception as json_err:
-                logger.error("Failed to parse OpenRouter JSON: %s (body: %s)", json_err, response.text[:200])
-                return {
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    logger.error("Failed to parse OpenRouter JSON: %s (body: %s)", json_err, response.text[:200])
+                    last_err = {
+                        "status": "error",
+                        "error_code": "INVALID_RESPONSE",
+                        "message": "The AI service returned an unparseable response. Please try again.",
+                    }
+                    continue
+
+                if isinstance(data, dict) and "error" in data:
+                    err_obj = data["error"]
+                    err_text = err_obj.get("message") if isinstance(err_obj, dict) else str(err_obj)
+                    logger.warning("OpenRouter returned error in body: %s", err_text)
+                    last_err = {
+                        "status": "error",
+                        "error_code": "PROVIDER_BUSY",
+                        "message": f"The AI provider is currently busy: {err_text}. Please retry.",
+                    }
+                    continue
+
+                choices = data.get("choices", []) if isinstance(data, dict) else []
+                if choices and isinstance(choices, list) and isinstance(choices[0], dict):
+                    msg_obj = choices[0].get("message")
+                    if isinstance(msg_obj, dict):
+                        raw_content = msg_obj.get("content")
+                        if not raw_content:
+                            raw_content = msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or ""
+                        reply_content = str(raw_content or "").strip()
+                        if reply_content:
+                            return {
+                                "status": "ok",
+                                "reply": reply_content,
+                                "model": data.get("model", target_model),
+                                "usage": data.get("usage"),
+                            }
+
+                last_err = {
                     "status": "error",
-                    "error_code": "INVALID_RESPONSE",
-                    "message": "The AI service returned an unparseable response. Please try again.",
+                    "error_code": "EMPTY_RESPONSE",
+                    "message": "The AI model returned an empty response. Please ask your question again.",
                 }
 
-            choices = data.get("choices", [])
-            if choices and isinstance(choices, list) and isinstance(choices[0], dict):
-                msg_obj = choices[0].get("message")
-                if isinstance(msg_obj, dict):
-                    raw_content = msg_obj.get("content")
-                    if not raw_content:
-                        raw_content = msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or ""
-                    reply_content = str(raw_content or "").strip()
-                    if reply_content:
-                        return {
-                            "status": "ok",
-                            "reply": reply_content,
-                            "model": data.get("model", target_model),
-                            "usage": data.get("usage"),
-                        }
+            elif response.status_code in {500, 502, 503, 504, 520, 521, 522, 524, 525}:
+                logger.warning("OpenRouter upstream provider error %s (attempt %d)", response.status_code, attempt + 1)
+                last_err = {
+                    "status": "error",
+                    "error_code": "PROVIDER_BUSY",
+                    "message": f"The OpenRouter free-tier AI provider is currently busy (HTTP {response.status_code}). Please retry in a moment.",
+                }
 
-            return {
+            elif response.status_code == 401:
+                logger.warning("OpenRouter API returned 401 Unauthorized")
+                return {
+                    "status": "error",
+                    "error_code": "INVALID_API_KEY",
+                    "message": "Invalid or expired OpenRouter API key. Please check your OPENROUTER_API_KEY configuration.",
+                }
+
+            elif response.status_code == 429:
+                logger.warning("OpenRouter API returned 429 Rate Limit")
+                last_err = {
+                    "status": "error",
+                    "error_code": "RATE_LIMIT_EXCEEDED",
+                    "message": "OpenRouter rate limit or model quota exceeded. Please wait a moment or try another model.",
+                }
+
+            elif response.status_code in {400, 404}:
+                err_msg = response.text[:200]
+                logger.warning("OpenRouter API returned %s: %s", response.status_code, err_msg)
+                return {
+                    "status": "error",
+                    "error_code": "MODEL_UNAVAILABLE",
+                    "message": f"The model '{target_model}' is unavailable on OpenRouter or received an invalid request: {err_msg}",
+                }
+
+            else:
+                logger.error("OpenRouter API error %s: %s", response.status_code, response.text[:300])
+                last_err = {
+                    "status": "error",
+                    "error_code": f"HTTP_{response.status_code}",
+                    "message": f"OpenRouter API returned error code {response.status_code}.",
+                }
+
+        except httpx.TimeoutException:
+            logger.error("OpenRouter request timed out after %.1f seconds (attempt %d)", timeout, attempt + 1)
+            last_err = {
                 "status": "error",
-                "error_code": "EMPTY_RESPONSE",
-                "message": "The AI model returned an empty response. Please ask your question again.",
+                "error_code": "TIMEOUT",
+                "message": f"Request to OpenRouter AI timed out after {int(timeout)} seconds. Please try again.",
             }
 
-        elif response.status_code in {500, 502, 503, 504, 524}:
-            logger.warning("OpenRouter upstream provider error %s", response.status_code)
-            return {
+        except (httpx.RequestError, httpx.HTTPError) as exc:
+            logger.error("OpenRouter connection error: %s (attempt %d)", exc, attempt + 1)
+            last_err = {
                 "status": "error",
-                "error_code": "PROVIDER_BUSY",
-                "message": f"The OpenRouter free-tier AI provider is currently busy (HTTP {response.status_code}). Please retry in a moment.",
+                "error_code": "NETWORK_ERROR",
+                "message": f"Network error communicating with OpenRouter AI service ({type(exc).__name__}). Please verify connectivity.",
             }
 
-        elif response.status_code == 401:
-            logger.warning("OpenRouter API returned 401 Unauthorized")
+        except Exception as exc:
+            logger.exception("Unexpected error in OpenRouter call: %s", exc)
             return {
                 "status": "error",
-                "error_code": "INVALID_API_KEY",
-                "message": "Invalid or expired OpenRouter API key. Please check your OPENROUTER_API_KEY configuration.",
+                "error_code": "INTERNAL_ERROR",
+                "message": f"An error occurred while communicating with the AI service ({type(exc).__name__}). Please retry your request.",
             }
 
-        elif response.status_code == 429:
-            logger.warning("OpenRouter API returned 429 Rate Limit")
-            return {
-                "status": "error",
-                "error_code": "RATE_LIMIT_EXCEEDED",
-                "message": "OpenRouter rate limit or model quota exceeded. Please wait a moment or try another model.",
-            }
-
-        elif response.status_code in {400, 404}:
-            err_msg = response.text[:200]
-            logger.warning("OpenRouter API returned %s: %s", response.status_code, err_msg)
-            return {
-                "status": "error",
-                "error_code": "MODEL_UNAVAILABLE",
-                "message": f"The model '{target_model}' is unavailable on OpenRouter or received an invalid request: {err_msg}",
-            }
-
-        else:
-            logger.error("OpenRouter API error %s: %s", response.status_code, response.text[:300])
-            return {
-                "status": "error",
-                "error_code": f"HTTP_{response.status_code}",
-                "message": f"OpenRouter API returned error code {response.status_code}.",
-            }
-
-    except httpx.TimeoutException:
-        logger.error("OpenRouter request timed out after %.1f seconds", timeout)
-        return {
-            "status": "error",
-            "error_code": "TIMEOUT",
-            "message": f"Request to OpenRouter AI timed out after {int(timeout)} seconds. Please try again.",
-        }
-
-    except httpx.RequestError as exc:
-        logger.error("OpenRouter connection error: %s", exc)
-        return {
-            "status": "error",
-            "error_code": "NETWORK_ERROR",
-            "message": "Network error communicating with OpenRouter AI service. Please verify connectivity.",
-        }
-
-    except Exception as exc:
-        logger.exception("Unexpected error in OpenRouter call: %s", exc)
-        return {
-            "status": "error",
-            "error_code": "INTERNAL_ERROR",
-            "message": "An internal error occurred while communicating with the AI service.",
-        }
+    return last_err or {
+        "status": "error",
+        "error_code": "INTERNAL_ERROR",
+        "message": "An unexpected error occurred while communicating with the AI service. Please retry.",
+    }
 
 
 async def process_chat_message(

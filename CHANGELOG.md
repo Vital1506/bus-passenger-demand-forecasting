@@ -5,7 +5,18 @@ All notable changes to the Bus Passenger Demand Forecasting platform will be doc
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - Phase 1: Security Hardening & Tenant Isolation
+## [Unreleased] - Phase 2: Correctness, Forecasting Engine, and AI Reliability
+
+### Added
+- **Dynamic Model Versioning (B6)**: Replaced hardcoded version string with `get_model_version()` deriving dynamic semantic build identifier (`1.0.0+YYYYMMDDHHMM`) or `BUS_FORECAST_MODEL_VERSION`.
+- **Per-Agency Timezone Support (B2)**: Added `get_agency_timezone()`, `get_current_local_time()`, and `get_current_hour_local()` supporting `zoneinfo.ZoneInfo` for agency-local operations, defaulting to `America/Chicago` or `BUS_FORECAST_TIMEZONE_<AGENCY>`.
+- **Intraday Baseline Linking (B3)**: Linked `GET /api/forecast/realtime/{route_id}` and `GET /api/forecast/intraday` to trained model daily forecast outputs from `FORECAST_PATH` or `PUBLIC_DEMO_CACHE`; raises 404 with helpful diagnostic if no baseline exists.
+- **Explicit Heuristic Interval Labeling (B4)**: Added `lower_90_heuristic` and `upper_90_heuristic` keys with `interval_method="heuristic_ratio"` in hourly intraday demand curves.
+- **Empirical Interval Calibration Guard (B7)**: Replaced magic 50.0 fallback in `calibrate_empirical_intervals()` with explicit `ValueError("Insufficient data: cannot calibrate empirical error intervals without residuals")`.
+- **AI Copilot Resilience & Token Expansion**: Increased token budget from 1000 to 2500 for reasoning models, added automatic retry on transient upstream disconnects / busy responses, and improved diagnostics for unexpected provider failures.
+- **Cold-Start Splash Timeout Tolerance**: Extended `/health` probe timeout from 25s to 75s and `waitForServer()` deadline from 60s to 90s in `web/app.js` to eliminate false timeout aborts on Render free-tier cold starts.
+
+## [Phase 1] - Security Hardening & Tenant Isolation
 
 ### Added
 - **AuthenticatedPrincipal Security Identity**: Structured dataclass in `src/auth.py` encapsulating caller role, tenant agency binding (`principal.agency`), key identifier, and constant-time authentication attributes.
