@@ -66,8 +66,14 @@ from .model_benchmark import run_multi_model_benchmark
 from .modeling import weekday_average_forecast
 from .monthly_data import MonthlyDataError, MonthlyRidershipStore, MonthlyStoreError
 from .occupancy_engine import compute_route_capacity_profile, compute_trip_occupancy
-from .operations_engine import get_operations_engine
-from .passenger_data import ingest_apc_dataset, parse_and_validate_apc_data
+from .operations_engine import get_operations_engine, register_disruption, list_disruptions
+from .passenger_data import (
+    ingest_apc_dataset,
+    parse_and_validate_apc_data,
+    parse_and_aggregate_etm_data,
+    aggregate_etm_to_daily,
+    ingest_etm_dataset,
+)
 from .realtime import get_realtime_service
 from .realtime.provider_registry import get_provider_registry
 from .reporting import (
@@ -348,6 +354,7 @@ ROUTE_AUTH_MAP: dict[tuple[str, str], UserRole] = {
     ("GET", "/api/forecast/intraday"): UserRole.ANALYST,
     ("GET", "/api/forecast/accuracy"): UserRole.ANALYST,
     ("GET", "/api/model/registry"): UserRole.ANALYST,
+    ("GET", "/api/operations/disruptions"): UserRole.ANALYST,
     ("GET", "/api/operations/alerts"): UserRole.ANALYST,
     ("GET", "/api/operations/dispatch-recommendations"): UserRole.ANALYST,
     ("GET", "/api/operations/metrics"): UserRole.ANALYST,
@@ -369,6 +376,9 @@ ROUTE_AUTH_MAP: dict[tuple[str, str], UserRole] = {
     ("POST", "/api/data/upload"): UserRole.OPERATOR,
     ("POST", "/api/data/ingest"): UserRole.OPERATOR,
     ("POST", "/api/data/demo"): UserRole.OPERATOR,
+    ("POST", "/api/data/etm/validate"): UserRole.OPERATOR,
+    ("POST", "/api/data/etm/ingest"): UserRole.OPERATOR,
+    ("POST", "/api/operations/disruptions"): UserRole.OPERATOR,
     ("POST", "/api/monthly-data/upload"): UserRole.OPERATOR,
     ("POST", "/api/passenger-data/upload"): UserRole.OPERATOR,
     ("POST", "/api/realtime/ingest"): UserRole.OPERATOR,
@@ -1485,6 +1495,42 @@ def get_operations_alerts(
     return [a.to_dict() for a in filtered]
 
 
+class DisruptionCreateRequest(BaseModel):
+    route: str = Field(..., max_length=64, description="Route ID affected")
+    start_time: str = Field(..., max_length=64, description="ISO 8601 start timestamp or YYYY-MM-DD HH:MM")
+    end_time: str = Field(..., max_length=64, description="ISO 8601 end timestamp or YYYY-MM-DD HH:MM")
+    severity: str = Field(default="MEDIUM", max_length=32, description="LOW, MEDIUM, HIGH, CRITICAL")
+    impact_factor: float = Field(default=0.7, ge=0.0, le=5.0, description="Demand multiplier during disruption")
+    description: str | None = Field(default="", max_length=255, description="Reason or notes")
+    agency_id: str = Field(default="default", max_length=64)
+
+
+@app.post("/api/operations/disruptions", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def create_service_disruption(req: DisruptionCreateRequest) -> dict[str, Any]:
+    """Register transit service disruption and adjust intraday demand forecasts."""
+    dis = register_disruption(
+        route_id=req.route,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        severity=req.severity,
+        impact_factor=req.impact_factor,
+        description=req.description or "",
+        agency_id=req.agency_id,
+    )
+    return {"message": "Service disruption registered successfully", "disruption": dis.to_dict()}
+
+
+@app.get("/api/operations/disruptions", dependencies=[Depends(require_role(UserRole.ANALYST))])
+def get_service_disruptions(
+    route_id: str | None = None,
+    agency_id: str | None = None,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    """List registered transit service disruptions."""
+    disruptions = list_disruptions(route_id=route_id, agency_id=agency_id, active_only=active_only)
+    return [d.to_dict() for d in disruptions]
+
+
 @app.get("/api/operations/dispatch-recommendations", dependencies=[Depends(require_role(UserRole.ANALYST))])
 def get_dispatch_recommendations(
     route_id: str | None = None,
@@ -1636,6 +1682,45 @@ def upload_passenger_data(
             source_filename=file.filename or "upload.csv",
         )
     return {"message": "Passenger data ingested successfully", "validation": val_res.to_dict(), "result": result}
+
+
+@app.post("/api/data/etm/validate", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def validate_etm_data(
+    file: UploadFile = File(...),
+    agency_id: str = "default",
+) -> dict[str, Any]:
+    """Validate raw ETM ticketing logs and preview aggregated hourly passenger buckets."""
+    content = file.file.read(25 * 1024 * 1024 + 1)
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds maximum size of 25 MB")
+    hourly_df, val_res = parse_and_aggregate_etm_data(content, agency_id=agency_id)
+    if not val_res.is_valid:
+        raise HTTPException(status_code=422, detail={"errors": val_res.error_samples, "validation": val_res.to_dict()})
+    return {"message": "ETM ticketing data validated successfully", "validation": val_res.to_dict(), "preview_rows": hourly_df.head(10).to_dict(orient="records")}
+
+
+@app.post("/api/data/etm/ingest", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def ingest_etm_data(
+    file: UploadFile = File(...),
+    agency_id: str = "default",
+) -> dict[str, Any]:
+    """Parse, aggregate into hourly buckets, and ingest ETM ticketing transactions into daily records."""
+    content = file.file.read(25 * 1024 * 1024 + 1)
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds maximum size of 25 MB")
+
+    hourly_df, val_res = parse_and_aggregate_etm_data(content, agency_id=agency_id)
+    if not val_res.is_valid:
+        raise HTTPException(status_code=422, detail={"errors": val_res.error_samples, "validation": val_res.to_dict()})
+
+    with get_db_session() as session:
+        result = ingest_etm_dataset(
+            session=session,
+            hourly_df=hourly_df,
+            agency_id=agency_id,
+            source_filename=file.filename or "etm_upload.csv",
+        )
+    return {"message": "ETM ticketing data ingested successfully", "validation": val_res.to_dict(), "result": result}
 
 
 @app.get("/api/occupancy/trip/{trip_id}", dependencies=[Depends(require_role(UserRole.ANALYST))])

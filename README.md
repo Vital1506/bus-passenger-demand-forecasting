@@ -90,8 +90,25 @@ An automated decision-support system analyzing live fleet telemetry to assist di
 - **Bus bunching detection:** flags consecutive buses on the same route with headway < 3 minutes or spacing < 600m.
 - **Excessive gap warnings:** flags service gaps > 4 km or > 18 minutes.
 - **Automated dispatch recommendations:** generates holding/spacing instructions at control points, short-turn directives, and standby injections.
+- **Service Disruption Management:** register route service disruptions (`POST /api/operations/disruptions`) with time spans and severity, automatically adjusting intraday demand forecasts.
 - **Fleet KPIs:** On-Time Performance (OTP), Excess Wait Time (EWT), and Service Regularity Index.
-- **REST APIs:** `/api/operations/alerts`, `/api/operations/dispatch-recommendations`, `/api/operations/metrics`.
+- **REST APIs:** `/api/operations/alerts`, `/api/operations/dispatch-recommendations`, `/api/operations/metrics`, `/api/operations/disruptions`.
+
+## Electronic Ticketing Machine (ETM) & Passenger Counting Pipeline
+
+Standardized automated passenger counting (APC) and fare collection ingestion:
+- **ETM Ticketing Adapter:** parses individual ticket tap transactions and issue timestamps, aggregates into hourly boardings and transaction counts, and rolls up into daily totals.
+- **Validation & Provenance:** validates route identifiers, enforces timestamp integrity, detects duplicates, logs audit provenance, and tracks job status.
+- **REST APIs:** `/api/data/etm/validate`, `/api/data/etm/ingest`, `/api/passenger-data/upload`.
+
+## Model Registry & Forecast Accuracy Ledger
+
+Enterprise model governance and rolling accuracy tracking:
+- **Model Registry:** registers every trained model artifact with semantic version, strategy, status (`candidate`, `active`, `retired`), hyperparameters, and package versions. Inspect via `GET /api/model/registry`.
+- **Forecast Accuracy Ledger:** persists forecast predictions alongside seasonal-naive baselines, recording actual observed boardings as they arrive. Computes rolling Weighted Absolute Percentage Error (WAPE) and forecast bias per route and per lead day (`GET /api/forecast/accuracy`).
+- **Conformal Prediction Intervals:** computes calibrated quantile error intervals by forecast lead day from backtest residuals.
+- **Cold-Start Forecasting:** generates baseline predictions for new or low-history routes (< 14 observations) using agency network medians.
+- **Weather & Calendar Signals:** zero-leakage Open-Meteo weather features (historical archive for past, forecast for future, missing stays NaN) and US transit holiday indicators.
 
 ## Automated data quality & drift detection
 

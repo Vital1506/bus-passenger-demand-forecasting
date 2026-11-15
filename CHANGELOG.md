@@ -5,7 +5,15 @@ All notable changes to the Bus Passenger Demand Forecasting platform will be doc
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - Phase 4 & 5: Forecasting Quality, Learned Diurnal Profiles & Drift Monitoring
+## [Unreleased] - Phase 6: Operator Features & Hardened CI
+
+### Added
+- **Service Disruption Logging & Intraday Adjustment (D5)**: Added `POST /api/operations/disruptions` and `GET /api/operations/disruptions`. Implemented `ServiceDisruption`, `register_disruption`, `list_disruptions`, and `get_disruption_impact` in `src/operations_engine.py`. Linked disruption impact multipliers into `build_intraday_route_forecast` in `src/hybrid_forecasting.py`, scaling predicted passenger demand during disruption time windows and exposing `has_disruption` and `disruption_impact_factor` per hour.
+- **Electronic Ticketing Machine (ETM) CSV Adapter (D5)**: Implemented `parse_and_aggregate_etm_data`, `aggregate_etm_to_daily`, and `ingest_etm_dataset` in `src/passenger_data.py`. Parses tap/transaction timestamps, groups by `(agency_id, route_id, service_date, hour)`, aggregates boardings and transaction counts, and handles vendor header variations cleanly. Added endpoints `POST /api/data/etm/validate` and `POST /api/data/etm/ingest`.
+- **Hardened GitHub CI Pipeline (D6)**: Updated `.github/workflows/python-package-conda.yml` to install `pytest-cov`, enforce critical linting (`flake8 . --count --select=E9,F63,F7,F82`), run Node.js UI tests (`node --test`), and execute full test suite with statement coverage checks (`pytest --cov=src --cov-report=term-missing -q`).
+- **Critical CI Bugfix**: Resolved undefined variable `import_gtfs_zip` in `src/routers/gtfs.py` that caused previous GitHub Action workflow run failures.
+
+## [Phase 4 & 5] - Forecasting Quality, Learned Diurnal Profiles & Drift Monitoring
 
 ### Added
 - **Open-Meteo Weather Adapter (C1)**: Implemented `src/weather_adapter.py` providing zero-leakage weather features (temperature, precipitation, wind speed, weather code). Uses historical archive API for dates $\le$ cutoff and forecast API for future horizons. Unconfigured or failed calls return `np.nan` with `weather_source="missing"` (never placeholder 15 °C or 0 mm).

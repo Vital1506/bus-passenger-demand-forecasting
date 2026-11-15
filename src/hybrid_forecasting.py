@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from .realtime.models import OccupancyStatus
 from .realtime.service import get_realtime_service
+from .operations_engine import get_disruption_impact
 
 # Standard 40-foot transit bus nominal capacity (seated + standing)
 DEFAULT_BUS_CAPACITY = 55
@@ -198,6 +199,15 @@ def build_intraday_route_forecast(
         else:
             calibrated_h = base_h
 
+        # Disruption impact adjustment (D5)
+        disruption_mult = get_disruption_impact(
+            route_id=route_id,
+            hour=h,
+            target_date=effective_target_date,
+            agency_id=agency_id,
+        )
+        calibrated_h = calibrated_h * disruption_mult
+
         # Uncertainty error bounds: heuristic ratio multipliers (renamed/documented)
         lower = max(0, int(round(calibrated_h * 0.82)))
         upper = int(round(calibrated_h * 1.22))
@@ -215,6 +225,8 @@ def build_intraday_route_forecast(
             "is_past": h < now_hour,
             "is_current": h == now_hour,
             "is_calibrated": is_calibrated and is_upcoming_window,
+            "disruption_impact_factor": disruption_mult,
+            "has_disruption": disruption_mult != 1.0,
         })
 
     # Projections

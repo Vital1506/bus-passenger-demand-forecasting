@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import AuthenticatedPrincipal, UserRole, require_role, enforce_agency_access
 from ..occupancy_engine import compute_route_capacity_profile, compute_trip_occupancy
-from ..operations_engine import get_operations_engine
+from ..operations_engine import get_operations_engine, register_disruption, list_disruptions
 from ..service_planner import SimulationScenario, run_service_simulation
 
 operations_router = APIRouter(tags=["operations"])
@@ -21,6 +21,42 @@ class SimulationRequest(BaseModel):
     additional_trips: int = Field(default=0, ge=-50, le=100)
     fare_adjustment_pct: float = Field(default=0.0, ge=-100.0, le=200.0)
     capacity_override: int | None = Field(default=None, ge=10, le=300)
+
+
+class DisruptionCreateRequest(BaseModel):
+    route: str = Field(..., max_length=64, description="Route ID affected")
+    start_time: str = Field(..., max_length=64, description="ISO 8601 start timestamp or YYYY-MM-DD HH:MM")
+    end_time: str = Field(..., max_length=64, description="ISO 8601 end timestamp or YYYY-MM-DD HH:MM")
+    severity: str = Field(default="MEDIUM", max_length=32, description="LOW, MEDIUM, HIGH, CRITICAL")
+    impact_factor: float = Field(default=0.7, ge=0.0, le=5.0, description="Demand multiplier during disruption")
+    description: str | None = Field(default="", max_length=255, description="Reason or notes")
+    agency_id: str = Field(default="default", max_length=64)
+
+
+@operations_router.post("/api/operations/disruptions", dependencies=[Depends(require_role(UserRole.OPERATOR))])
+def create_service_disruption(req: DisruptionCreateRequest) -> dict[str, Any]:
+    """Register transit service disruption and update intraday forecasts."""
+    dis = register_disruption(
+        route_id=req.route,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        severity=req.severity,
+        impact_factor=req.impact_factor,
+        description=req.description or "",
+        agency_id=req.agency_id,
+    )
+    return {"message": "Service disruption registered successfully", "disruption": dis.to_dict()}
+
+
+@operations_router.get("/api/operations/disruptions", dependencies=[Depends(require_role(UserRole.ANALYST))])
+def get_service_disruptions(
+    route_id: str | None = None,
+    agency_id: str | None = None,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    """List registered service disruptions."""
+    disruptions = list_disruptions(route_id=route_id, agency_id=agency_id, active_only=active_only)
+    return [d.to_dict() for d in disruptions]
 
 
 @operations_router.get("/api/operations/alerts", dependencies=[Depends(require_role(UserRole.ANALYST))])
