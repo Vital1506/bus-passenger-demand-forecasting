@@ -1236,6 +1236,8 @@ async function refreshStatus() {
   return connected;
 }
 async function waitForServer() {
+  // The public dashboard uses the same-origin forecast API and synthetic cache.
+  // Database/storage readiness is monitored separately and must not block the demo UI.
   const deadline = Date.now() + 90000;
   const delays = [800, 1500, 3000, 5000];
   let attempt = 0;
@@ -1243,12 +1245,12 @@ async function waitForServer() {
 
   while (Date.now() < deadline) {
     try {
-      await api("/health");
-      const ready = await api("/api/ready");
-      if (ready && ready.status === "ready" && ready.forecasts_ready === true) {
+      const health = await api("/health");
+      if (health && health.status === "ok") {
+        setSplashStatus("Cloud server is online. Loading dashboard data…");
         return;
       }
-      lastError = new Error("Forecast service is still initializing");
+      lastError = new Error("Cloud server health check is not ready");
     } catch (error) {
       lastError = error;
     }
@@ -1256,11 +1258,9 @@ async function waitForServer() {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     const elapsed = Math.round((Date.now() - state.openingStartedAt) / 1000);
-    if (elapsed > 4) {
-      setSplashStatus(`Waking up cloud server (${elapsed}s elapsed, waiting for forecast readiness)…`);
-    } else {
-      setSplashStatus("Connecting to transit forecast service…");
-    }
+    setSplashStatus(elapsed > 4
+      ? `Waking up cloud server (${elapsed}s elapsed)…`
+      : "Connecting to transit forecast service…");
     await new Promise((resolve) => window.setTimeout(
       resolve,
       Math.min(delays[Math.min(attempt++, delays.length - 1)], remaining)

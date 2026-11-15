@@ -1,10 +1,10 @@
-const CACHE = "bus-demand-ui-v11";
+const CACHE = "bus-demand-ui-v12";
 const APP_SHELL = [
   "/",
   "/static/app.css",
   "/static/app.css?v=11",
   "/static/app.js",
-  "/static/app.js?v=11",
+  "/static/app.js?v=12",
   "/static/route_catalog.mjs",
   "/static/route_catalog.json",
   "/static/icon.svg",

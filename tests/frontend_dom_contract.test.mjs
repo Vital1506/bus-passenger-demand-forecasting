@@ -89,17 +89,19 @@ test("ai assistant declares accessible toggle, chat panel, and interactive contr
 
 test("service worker and app script employ cache-busting and bypass health/ready checks", () => {
   assert.match(html, /<script type="module" src="\/static\/app\.js\?v=\d+"><\/script>/);
-  assert.match(sw, /const CACHE = "bus-demand-ui-v11";/);
+  assert.match(sw, /const CACHE = "bus-demand-ui-v12";/);
   assert.match(sw, /url\.pathname === ["']\/health["']/);
   assert.match(sw, /url\.pathname === ["']\/ready["']/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(sw, /\/static\/app\.js\?v=11/);
 });
 
-test("startup waits for actual forecast readiness and retries when it is unavailable", () => {
-  assert.match(app, /ready\.status === "ready" && ready\.forecasts_ready === true/);
-  assert.match(app, /Forecast service is still initializing/);
-  assert.match(app, /waiting for forecast readiness/);
+test("startup uses backend health and does not block the public dashboard on database readiness", () => {
+  const startup = app.slice(app.indexOf("async function waitForServer()"), app.indexOf("async function withBusy("));
+  assert.match(startup, /api\("\/health"\)/);
+  assert.match(startup, /Cloud server is online\. Loading dashboard data/);
+  assert.doesNotMatch(startup, /api\("\/api\/ready"\)|forecasts_ready/);
+  assert.match(app, /\/api\/public-demo\/status/);
 });
 
 test("service worker caches only successful non-opaque static responses", () => {
