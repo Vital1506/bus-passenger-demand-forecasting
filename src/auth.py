@@ -251,3 +251,65 @@ def verify_agency_isolation(caller_role: UserRole, caller_agency: str | None, ta
     if not caller_agency or not target_agency:
         return False  # Fail closed: unassigned agency or missing target cannot cross tenants
     return caller_agency.strip().lower() == target_agency.strip().lower()
+
+
+def enforce_agency_access(principal: AuthenticatedPrincipal | None, requested_agency: str | None) -> str:
+    """Enforce agency tenant isolation:
+    - Administrators have global access and can specify any agency (or default).
+    - Non-administrators (operators, analysts) are strictly bound to principal.agency.
+      Attempting to access a different agency raises 403 Forbidden.
+    """
+    if principal is None or principal.role == UserRole.ADMINISTRATOR:
+        return requested_agency or "default"
+
+    caller_agency = principal.agency or "default"
+    if requested_agency and requested_agency.strip().lower() != caller_agency.strip().lower():
+        raise HTTPException(
+            status_code=403,
+            detail=f"Forbidden: Principal agency '{caller_agency}' is not authorized to access agency '{requested_agency}'.",
+        )
+    return caller_agency
+
+
+def authorize_ai_chat(authorization: str | None = Header(default=None)) -> AuthenticatedPrincipal:
+    """Authorize AI chat requests using constant-time comparison, cleanly separating platform access from OpenRouter keys."""
+    dev_mode = os.getenv("BUS_FORECAST_DEV_MODE", "").strip().lower() in {"1", "true", "yes"}
+    if dev_mode and not authorization:
+        return AuthenticatedPrincipal(role=UserRole.ADMINISTRATOR, agency="default", key_id="dev_mode")
+
+    principal = resolve_principal(authorization)
+    if authorization and not principal.is_authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API access key. Enter the correct API access key in app settings.",
+        )
+
+    require_auth = os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() in {"1", "true", "yes"}
+    allow_public_ai = os.getenv("BUS_FORECAST_ALLOW_PUBLIC_AI", "true").lower() in {"1", "true", "yes"}
+
+    if not principal.is_authenticated and require_auth and not allow_public_ai:
+        raise HTTPException(
+            status_code=401,
+            detail="Enter the API access key in app settings to use the AI Copilot.",
+        )
+
+    token = None
+    if authorization:
+        parts = authorization.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+        elif len(parts) == 1:
+            token = parts[0]
+
+    admin_key = (os.getenv("BUS_FORECAST_ADMIN_KEY") or "").strip()
+    api_key = (os.getenv("BUS_FORECAST_API_KEY") or "").strip()
+    op_key = (os.getenv("BUS_FORECAST_OPERATOR_KEY") or "").strip()
+
+    if token:
+        if admin_key and hmac.compare_digest(token, admin_key):
+            return AuthenticatedPrincipal(role=UserRole.ADMINISTRATOR, agency=principal.agency, key_id="admin_env")
+        if (api_key and hmac.compare_digest(token, api_key)) or (op_key and hmac.compare_digest(token, op_key)):
+            return AuthenticatedPrincipal(role=UserRole.OPERATOR, agency=principal.agency, key_id="operator_env")
+
+    return principal
+

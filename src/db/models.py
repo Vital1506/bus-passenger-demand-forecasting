@@ -136,14 +136,23 @@ class ModelArtifactRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     agency_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
-    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(64), nullable=False, default="machine_learning")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)  # candidate, active, retired
     horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
     trained_through: Mapped[date] = mapped_column(Date, nullable=False)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     data_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    hyperparameters_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    package_versions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     metrics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+# Model Registry record alias for enterprise tracking
+ModelRegistryRecord = ModelArtifactRecord
 
 
 # ---------------------------------------------------------------------------
@@ -415,15 +424,23 @@ class ForecastRecord(Base):
     route_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     forecast_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     forecast_horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    lead_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     predicted_demand: Mapped[float] = mapped_column(Float, nullable=False)
     lower_bound: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     upper_bound: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    seasonal_naive_predicted: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    actual_demand: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    actual_observed_at_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     model_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
 
     __table_args__ = (
         Index("ix_forecast_agency_route_date", "agency_id", "route_id", "forecast_date"),
     )
+
+
+# Forecast Ledger alias
+ForecastLedgerRecord = ForecastRecord
 
 
 class OperationalAlertRecord(Base):

@@ -30,6 +30,8 @@ from .db import (
     record_audit_event as repo_record_audit_event,
     record_monthly_import_event as repo_record_monthly_import_event,
     replace_all_daily_counts,
+    compute_forecast_accuracy,
+    list_model_artifacts,
     get_monthly_observations as repo_get_monthly_observations,
     get_monthly_route_history as repo_get_monthly_route_history,
     upsert_monthly_records as repo_upsert_monthly_records,
@@ -38,6 +40,8 @@ from .db import (
 from .auth import (
     AuthenticatedPrincipal,
     UserRole,
+    authorize_ai_chat,
+    enforce_agency_access,
     require_role,
     resolve_principal,
     resolve_role,
@@ -342,6 +346,8 @@ ROUTE_AUTH_MAP: dict[tuple[str, str], UserRole] = {
     ("GET", "/api/forecast.csv"): UserRole.ANALYST,
     ("GET", "/api/forecast/realtime/{route_id}"): UserRole.ANALYST,
     ("GET", "/api/forecast/intraday"): UserRole.ANALYST,
+    ("GET", "/api/forecast/accuracy"): UserRole.ANALYST,
+    ("GET", "/api/model/registry"): UserRole.ANALYST,
     ("GET", "/api/operations/alerts"): UserRole.ANALYST,
     ("GET", "/api/operations/dispatch-recommendations"): UserRole.ANALYST,
     ("GET", "/api/operations/metrics"): UserRole.ANALYST,
@@ -385,75 +391,6 @@ ROUTE_AUTH_MAP: dict[tuple[str, str], UserRole] = {
 def authorize(authorization: str | None = Header(default=None)) -> AuthenticatedPrincipal:
     """Require a configured bearer key with at least ANALYST role on hosted deployments."""
     return require_role(UserRole.ANALYST)(authorization)
-
-
-def authorize_ai_chat(authorization: str | None = Header(default=None)) -> AuthenticatedPrincipal:
-    """Authorize AI chat requests using constant-time comparison, cleanly separating platform access from OpenRouter keys.
-
-    1. Public Demo Mode: If unauthenticated (no Bearer token provided), public access is allowed
-       by default (read-only, rate-limited, grounded in transit telemetry).
-    2. Authenticated Principal: Valid Bearer token matching configured role keys.
-    3. Invalid Token: If a token is supplied but incorrect, returns 401 Unauthorized.
-    4. Explicit Lockdown: If BUS_FORECAST_REQUIRE_AUTH=true AND BUS_FORECAST_ALLOW_PUBLIC_AI=false,
-       unauthenticated requests receive a 401 prompt to enter the operator access key.
-    """
-    dev_mode = os.getenv("BUS_FORECAST_DEV_MODE", "").strip().lower() in {"1", "true", "yes"}
-    if dev_mode and not authorization:
-        return AuthenticatedPrincipal(role=UserRole.ADMINISTRATOR, agency="default", key_id="dev_mode")
-
-    principal = resolve_principal(authorization)
-    if authorization and not principal.is_authenticated:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API access key. Enter the correct API access key in app settings.",
-        )
-
-    require_auth = os.getenv("BUS_FORECAST_REQUIRE_AUTH", "").lower() in {"1", "true", "yes"}
-    allow_public_ai = os.getenv("BUS_FORECAST_ALLOW_PUBLIC_AI", "true").lower() in {"1", "true", "yes"}
-
-    if not principal.is_authenticated and require_auth and not allow_public_ai:
-        raise HTTPException(
-            status_code=401,
-            detail="Enter the API access key in app settings to use the AI Copilot.",
-        )
-
-    token = None
-    if authorization:
-        parts = authorization.strip().split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-        elif len(parts) == 1:
-            token = parts[0]
-
-    admin_key = (os.getenv("BUS_FORECAST_ADMIN_KEY") or "").strip()
-    api_key = (os.getenv("BUS_FORECAST_API_KEY") or "").strip()
-    op_key = (os.getenv("BUS_FORECAST_OPERATOR_KEY") or "").strip()
-
-    if token:
-        if admin_key and hmac.compare_digest(token, admin_key):
-            return AuthenticatedPrincipal(role=UserRole.ADMINISTRATOR, agency=principal.agency, key_id="admin_env")
-        if (api_key and hmac.compare_digest(token, api_key)) or (op_key and hmac.compare_digest(token, op_key)):
-            return AuthenticatedPrincipal(role=UserRole.OPERATOR, agency=principal.agency, key_id="operator_env")
-
-    return principal
-
-
-def enforce_agency_access(principal: AuthenticatedPrincipal | None, requested_agency: str | None) -> str:
-    """Enforce agency tenant isolation:
-    - Administrators have global access and can specify any agency (or default).
-    - Non-administrators (operators, analysts) are strictly bound to principal.agency.
-      Attempting to access a different agency raises 403 Forbidden.
-    """
-    if principal is None or principal.role == UserRole.ADMINISTRATOR:
-        return requested_agency or "default"
-
-    caller_agency = principal.agency or "default"
-    if requested_agency and requested_agency.strip().lower() != caller_agency.strip().lower():
-        raise HTTPException(
-            status_code=403,
-            detail=f"Forbidden: Principal agency '{caller_agency}' is not authorized to access agency '{requested_agency}'.",
-        )
-    return caller_agency
 
 
 def require_public_monthly_read() -> None:
@@ -1505,6 +1442,31 @@ def get_intraday_network_curve() -> dict[str, Any]:
             pass
 
     return build_network_intraday_curve(network_daily_base=network_base if network_base is not None else 50000.0)
+
+
+@app.get("/api/forecast/accuracy")
+def get_forecast_accuracy_endpoint(
+    window_days: int = 30,
+    agency_id: str | None = None,
+    principal: AuthenticatedPrincipal = Depends(require_role(UserRole.ANALYST)),
+) -> dict[str, Any]:
+    """Compute rolling forecast accuracy (WAPE, bias) per route and lead day vs seasonal naive."""
+    effective_agency = enforce_agency_access(principal, agency_id)
+    with get_db_session() as session:
+        return compute_forecast_accuracy(session, agency_id=effective_agency, window_days=window_days)
+
+
+@app.get("/api/model/registry")
+def get_model_registry_endpoint(
+    status: str | None = None,
+    agency_id: str | None = None,
+    principal: AuthenticatedPrincipal = Depends(require_role(UserRole.ANALYST)),
+) -> list[dict[str, Any]]:
+    """List registered candidate, active, and retired models in the Model Registry."""
+    effective_agency = enforce_agency_access(principal, agency_id)
+    with get_db_session() as session:
+        return list_model_artifacts(session, agency_id=effective_agency, status=status)
+
 
 
 @app.get("/api/operations/alerts", dependencies=[Depends(require_role(UserRole.ANALYST))])

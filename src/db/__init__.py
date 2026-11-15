@@ -43,6 +43,9 @@ from .repository import (
     write_source_metadata,
     read_source_metadata,
     record_monthly_import_event,
+    compute_forecast_accuracy,
+    list_model_artifacts,
+    register_model_artifact,
 )
 
 __all__ = [

@@ -5,7 +5,16 @@ All notable changes to the Bus Passenger Demand Forecasting platform will be doc
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - Phase 2: Correctness, Forecasting Engine, and AI Reliability
+## [Unreleased] - Phase 3: Persistence, Model Registry & Forecast Ledger
+
+### Added
+- **Model Registry Architecture (D2)**: Expanded `ModelArtifactRecord` / `ModelRegistryRecord` in `src/db/models.py` with `model_id`, `strategy`, `status` (`candidate`, `active`, `retired`), `hyperparameters_json`, and `package_versions_json`.
+- **Forecast Ledger & Accuracy Tracking (D3)**: Enhanced `ForecastRecord` with `lead_day`, `seasonal_naive_predicted`, `actual_demand`, and `actual_observed_at_utc`. Added `compute_forecast_accuracy()` in `src/db/repository.py` and endpoint `GET /api/forecast/accuracy` reporting rolling WAPE and bias per route and per lead day vs seasonal naive.
+- **Model Registry API (D2)**: Added endpoint `GET /api/model/registry` to inspect registered model builds, hyperparameters, and backtest metrics across lifecycle stages.
+- **Alembic Database Migration (D1)**: Authored migration `3c4d5e6f7a8b_model_registry_and_forecast_ledger.py` and added automated column migration verification in `src/db/session.py`.
+- **APIRouter Modularization (D4)**: Created modular domain APIRouters in `src/routers/` (`auth.py`, `ai.py`, `data.py`, `forecast.py`, `gtfs.py`, `operations.py`, `reports.py`, `realtime.py`) while maintaining 100% backward compatibility for all existing route decorators and test imports.
+
+## [Phase 2] - Correctness, Forecasting Engine, and AI Reliability
 
 ### Added
 - **Dynamic Model Versioning (B6)**: Replaced hardcoded version string with `get_model_version()` deriving dynamic semantic build identifier (`1.0.0+YYYYMMDDHHMM`) or `BUS_FORECAST_MODEL_VERSION`.
