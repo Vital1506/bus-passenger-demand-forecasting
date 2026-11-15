@@ -93,3 +93,37 @@ def test_b6_dynamic_model_versioning(monkeypatch):
     assert ver.startswith("1.0.0+")
     assert len(ver) > 10
 
+
+def test_conformal_lead_day_intervals():
+    from src.model_benchmark import calibrate_lead_day_conformal_intervals
+
+    residuals_by_lead = {
+        1: [-20, -10, 0, 5, 10, 15, -5, 8, -12, 18],
+        7: [-80, -40, 10, 30, 60, -50, 75, -90, 85, -20],
+    }
+    bounds = calibrate_lead_day_conformal_intervals(residuals_by_lead, coverage_level=0.90)
+    assert 1 in bounds
+    assert 7 in bounds
+    # Lead day 7 should have a wider interval span than lead day 1
+    span_1 = bounds[1]["upper_offset"] - bounds[1]["lower_offset"]
+    span_7 = bounds[7]["upper_offset"] - bounds[7]["lower_offset"]
+    assert span_7 > span_1
+
+
+def test_cold_start_route_forecast():
+    from src.model_benchmark import cold_start_route_forecast
+
+    history = pd.DataFrame({
+        "service_date": ["2026-11-01", "2026-11-02", "2026-11-03"],
+        "route_id": ["R1", "R1", "R1"],
+        "passengers": [400.0, 420.0, 410.0],
+    })
+    target_dates = ["2026-11-09", "2026-11-10"]
+    cold = cold_start_route_forecast("NEW_ROUTE_99", target_dates, history, scheduled_trips_per_day=40)
+    assert len(cold) == 2
+    assert cold[0]["route_id"] == "NEW_ROUTE_99"
+    assert cold[0]["is_cold_start"] is True
+    assert cold[0]["predicted_passengers"] > 0
+    assert cold[0]["lower_90"] < cold[0]["predicted_passengers"] < cold[0]["upper_90"]
+
+

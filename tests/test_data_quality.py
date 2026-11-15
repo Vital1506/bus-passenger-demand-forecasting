@@ -59,6 +59,26 @@ def test_data_quality_api_endpoints():
     assert "/api/quality/audit-logs" in paths
     assert "/api/quality/check-drift" in paths
 
+
+def test_c7_residual_psi_drift():
+    """Verify C7: PSI on forecast residuals detects model degradation and recommends retraining."""
+    np.random.seed(42)
+    monitor = DataQualityMonitor()
+
+    # Stable residuals: mean zero
+    val_res = np.random.normal(0, 20, 200)
+    prod_res_stable = np.random.normal(0, 22, 100)
+    res_stable = monitor.assess_residual_drift(val_res, prod_res_stable)
+    assert res_stable["drift_level"] == "STABLE"
+    assert res_stable["retraining_recommended"] is False
+
+    # Degraded model: large residual bias/variance drift
+    prod_res_drifted = np.random.normal(80, 50, 100)
+    res_drifted = monitor.assess_residual_drift(val_res, prod_res_drifted)
+    assert res_drifted["drift_level"] == "SIGNIFICANT"
+    assert res_drifted["retraining_recommended"] is True
+
+    import src.app as app_mod
     drift_stat = app_mod.get_quality_drift_status()
     assert "psi_score" in drift_stat
     assert "drift_level" in drift_stat

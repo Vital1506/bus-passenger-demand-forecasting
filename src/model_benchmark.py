@@ -205,3 +205,82 @@ def run_multi_model_benchmark(
         "champion_model": champion_model,
         "leaderboard": leaderboard,
     }
+
+
+def calibrate_lead_day_conformal_intervals(
+    residuals_by_lead: dict[int, list[float] | np.ndarray],
+    coverage_level: float = 0.90,
+) -> dict[int, dict[str, float]]:
+    """Compute conformalized empirical prediction intervals for each lead day horizon.
+    
+    Horizons further in the future naturally accumulate higher variance and wider bounds.
+    """
+    alpha = 1.0 - coverage_level
+    results = {}
+    for lead_day, res_list in sorted(residuals_by_lead.items()):
+        arr = np.asarray(res_list, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if len(arr) == 0:
+            results[lead_day] = {
+                "lower_offset": 0.0,
+                "upper_offset": 0.0,
+                "sample_size": 0,
+                "coverage_level": coverage_level,
+            }
+            continue
+
+        n = len(arr)
+        # Conformal quantile adjustment factor (1 + 1/n)
+        q_low_p = max(0.0, (alpha / 2.0) * (1.0 + 1.0 / n) * 100.0)
+        q_high_p = min(100.0, (1.0 - (alpha / 2.0) * (1.0 + 1.0 / n)) * 100.0)
+
+        lower_offset = float(np.percentile(arr, q_low_p))
+        upper_offset = float(np.percentile(arr, q_high_p))
+        results[lead_day] = {
+            "lower_offset": round(lower_offset, 2),
+            "upper_offset": round(upper_offset, 2),
+            "sample_size": n,
+            "coverage_level": coverage_level,
+        }
+    return results
+
+
+def cold_start_route_forecast(
+    new_route_id: str,
+    target_dates: list[str],
+    network_history: pd.DataFrame,
+    scheduled_trips_per_day: int | None = None,
+) -> list[dict[str, Any]]:
+    """Estimate passenger demand for new routes with no prior historical observations.
+    
+    Uses network-wide median passenger intensity per route or per scheduled trip.
+    Explicitly flags output with is_cold_start=True to prevent confusing with trained models.
+    """
+    if network_history.empty or "passengers" not in network_history.columns:
+        raise ValueError("Cannot compute cold-start prior without network historical baseline")
+
+    route_medians = network_history.groupby("route_id")["passengers"].median()
+    system_median = float(route_medians.median())
+
+    # If scheduled trips are known, scale by trip density
+    daily_estimate = system_median
+    if scheduled_trips_per_day and scheduled_trips_per_day > 0:
+        daily_estimate = round(scheduled_trips_per_day * (system_median / 40.0), 1)
+
+    output = []
+    for d in target_dates:
+        d_str = str(d)
+        dt = pd.to_datetime(d_str)
+        # Weekday/weekend ratio
+        multiplier = 0.65 if dt.dayofweek >= 5 else 1.0
+        predicted = round(daily_estimate * multiplier, 1)
+        output.append({
+            "service_date": d_str,
+            "route_id": str(new_route_id),
+            "predicted_passengers": predicted,
+            "lower_90": round(predicted * 0.70, 1),
+            "upper_90": round(predicted * 1.35, 1),
+            "is_cold_start": True,
+            "estimation_method": "network_median_prior",
+        })
+    return output

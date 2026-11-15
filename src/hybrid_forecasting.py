@@ -99,6 +99,7 @@ class IntradayRouteForecast:
     rest_of_day_predicted_boardings: int
     crowding_risk_level: str  # LOW, MODERATE, HIGH, CRITICAL
     hourly_profile: list[dict[str, Any]]
+    profile_source: str = "default_transit_standard"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +108,7 @@ class IntradayRouteForecast:
             "current_hour": self.current_hour,
             "daily_baseline_boardings": round(self.daily_baseline_boardings, 1),
             "is_realtime_calibrated": self.is_realtime_calibrated,
+            "profile_source": self.profile_source,
             "active_vehicles_count": self.active_vehicles_count,
             "current_onboard_passengers": self.current_onboard_passengers,
             "average_route_delay_seconds": round(self.average_route_delay_seconds, 1),
@@ -118,6 +120,31 @@ class IntradayRouteForecast:
         }
 
 
+def learn_diurnal_profile_from_hourly(
+    hourly_df: Any,
+    route_id: str | None = None,
+) -> tuple[list[float], str]:
+    """Derive empirical 24-hour diurnal boarding profile from APC/telemetry records."""
+    if hourly_df is None or not hasattr(hourly_df, "empty") or hourly_df.empty or "hour" not in hourly_df.columns or "boardings" not in hourly_df.columns:
+        return NORMALIZED_DIURNAL, "default_transit_standard"
+
+    sub = hourly_df
+    if route_id and "route_id" in sub.columns:
+        matched = sub[sub["route_id"].astype(str) == str(route_id)]
+        if len(matched) >= 24:
+            sub = matched
+
+    grouped = sub.groupby("hour")["boardings"].mean()
+    if len(grouped) < 20 or grouped.sum() <= 0:
+        return NORMALIZED_DIURNAL, "default_transit_standard"
+
+    weights = [float(grouped.get(h, 0.001)) for h in range(24)]
+    total_w = sum(weights)
+    if total_w <= 0:
+        return NORMALIZED_DIURNAL, "default_transit_standard"
+    return [w / total_w for w in weights], "learned_apc"
+
+
 def build_intraday_route_forecast(
     route_id: str,
     daily_baseline_passengers: float = 2400.0,
@@ -125,11 +152,18 @@ def build_intraday_route_forecast(
     capacity: int = DEFAULT_BUS_CAPACITY,
     agency_id: str | None = None,
     target_date: str | None = None,
+    hourly_observations: Any = None,
 ) -> IntradayRouteForecast:
     """Compute real-time calibrated intraday forecast for a route using agency local timezone."""
     now_dt = get_current_local_time(agency_id)
     now_hour = current_hour if current_hour is not None else now_dt.hour
     effective_target_date = target_date or now_dt.strftime("%Y-%m-%d")
+
+    # Diurnal weights resolution
+    diurnal_profile, profile_source = learn_diurnal_profile_from_hourly(
+        hourly_df=hourly_observations,
+        route_id=route_id,
+    )
 
     # Fetch live telemetry from RealtimeService
     rt_service = get_realtime_service()
@@ -149,7 +183,6 @@ def build_intraday_route_forecast(
     avg_delay = sum(delays) / len(delays) if delays else 0.0
 
     # Downstream queue factor: delays cause passenger buildup at stops
-    # E.g. a 5-minute delay (300s) on a 10-minute headway route causes ~50% extra passenger arrival accumulation
     delay_multiplier = 1.0 + min(1.0, max(-0.3, avg_delay / 600.0)) if is_calibrated else 1.0
 
     # Hourly distribution
@@ -157,7 +190,7 @@ def build_intraday_route_forecast(
     daily_total = max(100.0, float(daily_baseline_passengers))
 
     for h in range(24):
-        base_h = daily_total * NORMALIZED_DIURNAL[h]
+        base_h = daily_total * diurnal_profile[h]
         # Real-time calibration for upcoming hours (modular arithmetic fixes hour 21-23 wraparound bug)
         is_upcoming_window = (h - now_hour) % 24 <= 3
         if is_calibrated and is_upcoming_window:
@@ -217,6 +250,7 @@ def build_intraday_route_forecast(
         rest_of_day_predicted_boardings=rest_of_day,
         crowding_risk_level=risk,
         hourly_profile=hourly_curve,
+        profile_source=profile_source,
     )
 
 

@@ -147,3 +147,29 @@ def test_b3_realtime_forecast_baseline_linking(monkeypatch):
     assert exc.value.status_code == 404
 
 
+def test_b5_diurnal_profile_learning():
+    """Verify B5: learned diurnal profile adapts weights from hourly APC records."""
+    import pandas as pd
+    from src.hybrid_forecasting import learn_diurnal_profile_from_hourly, build_intraday_route_forecast
+
+    # Default fallback when no data
+    weights, source = learn_diurnal_profile_from_hourly(None)
+    assert source == "default_transit_standard"
+    assert len(weights) == 24
+
+    # With synthetic APC hourly data peaked at hour 17 (5 PM)
+    hours = list(range(24))
+    boardings = [10.0] * 24
+    boardings[17] = 200.0  # Big evening rush
+    df = pd.DataFrame({"route_id": ["99"] * 24, "hour": hours, "boardings": boardings})
+
+    learned_weights, source = learn_diurnal_profile_from_hourly(df, route_id="99")
+    assert source == "learned_apc"
+    assert learned_weights[17] > 0.30  # Peak reflected
+
+    fc = build_intraday_route_forecast("99", daily_baseline_passengers=1000.0, hourly_observations=df)
+    assert fc.profile_source == "learned_apc"
+    assert fc.to_dict()["profile_source"] == "learned_apc"
+
+
+

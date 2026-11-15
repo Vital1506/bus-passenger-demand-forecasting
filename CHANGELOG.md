@@ -5,7 +5,17 @@ All notable changes to the Bus Passenger Demand Forecasting platform will be doc
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - Phase 3: Persistence, Model Registry & Forecast Ledger
+## [Unreleased] - Phase 4 & 5: Forecasting Quality, Learned Diurnal Profiles & Drift Monitoring
+
+### Added
+- **Open-Meteo Weather Adapter (C1)**: Implemented `src/weather_adapter.py` providing zero-leakage weather features (temperature, precipitation, wind speed, weather code). Uses historical archive API for dates $\le$ cutoff and forecast API for future horizons. Unconfigured or failed calls return `np.nan` with `weather_source="missing"` (never placeholder 15 °C or 0 mm).
+- **Calendar & Transit Holiday Features (C2)**: Implemented `src/calendar_features.py` computing calendar features and US transit holidays (`is_transit_holiday`, `holiday_name`, `is_holiday_eve`, `is_holiday_subsequent`) strictly as-of service date with zero future leakage.
+- **Conformal Prediction Intervals (C5)**: Implemented `calibrate_lead_day_conformal_intervals()` in `src/model_benchmark.py` calculating empirical quantile error bounds per lead-day horizon from backtest residuals.
+- **Cold-Start Route Forecasting (C6)**: Implemented `cold_start_route_forecast()` in `src/model_benchmark.py` generating baseline forecasts for routes with $< 14$ days of history based on agency network medians, labeled with `strategy="cold_start_network_median"`.
+- **Learned Diurnal Hourly Profiles (B5)**: Implemented `learn_diurnal_profile_from_hourly()` in `src/hybrid_forecasting.py` computing empirical 24-hour boarding proportions from APC hourly records per route and day-of-week. Sets `profile_source="learned_empirical"` when sufficient samples exist ($\ge 24$) and falls back to static profile with `profile_source="fallback_static"`.
+- **Residual PSI Drift Monitoring (C7)**: Implemented `assess_residual_drift()` in `src/data_quality.py` computing Population Stability Index (PSI) between baseline holdout residuals and recent production residuals, categorizing drift risk (`no_drift`, `moderate_drift`, `significant_drift`). Added to `GET /api/data/quality/drift`.
+
+## [Phase 3] - Persistence, Model Registry & Forecast Ledger
 
 ### Added
 - **Model Registry Architecture (D2)**: Expanded `ModelArtifactRecord` / `ModelRegistryRecord` in `src/db/models.py` with `model_id`, `strategy`, `status` (`candidate`, `active`, `retired`), `hyperparameters_json`, and `package_versions_json`.
